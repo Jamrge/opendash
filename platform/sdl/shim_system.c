@@ -186,9 +186,11 @@ struct mallinfo mallinfo(void)
 
 void* memalign(size_t alignment, size_t size)
 {
-	void* ptr = NULL;
-	if (posix_memalign(&ptr, alignment, size) != 0) return NULL;
-	return ptr;
+	/* desktop: alignment is only required by the 3DS soc syscall, which is
+	 * a no-op shim here; plain malloc keeps this portable (MinGW-w64's
+	 * CRT has no guaranteed posix_memalign). */
+	(void)alignment;
+	return malloc(size);
 }
 
 void* linearAlloc(size_t size) { return malloc(size); }
@@ -499,6 +501,20 @@ FILE* gd3ds_fopen(const char* path, const char* mode)
 }
 
 /* Create path (and its missing parents) after translation. */
+#ifdef _WIN32
+#include <direct.h>     /* _mkdir (MinGW has no 2-arg mkdir) */
+static int gd_system_mkdir(const char* path, mode_t mode)
+{
+	(void)mode;
+	return _mkdir(path);
+}
+#else
+static int gd_system_mkdir(const char* path, mode_t mode)
+{
+	return mkdir(path, mode);
+}
+#endif
+
 int gd3ds_mkdir(const char* path, mode_t mode)
 {
 	char translated[1024];
@@ -517,9 +533,9 @@ int gd3ds_mkdir(const char* path, mode_t mode)
 		if (*p == '/')
 		{
 			*p = '\0';
-			mkdir(tmp, mode);
+			gd_system_mkdir(tmp, mode);
 			*p = '/';
 		}
 	}
-	return mkdir(tmp, mode);
+	return gd_system_mkdir(tmp, mode);
 }
