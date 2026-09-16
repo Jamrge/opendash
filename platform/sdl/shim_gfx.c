@@ -46,10 +46,14 @@
 /* Internal types                                                       */
 /* ------------------------------------------------------------------ */
 
-/* C3D_Tex: real struct wrapping an SDL texture (header stays SDL-free) */
+/* C3D_Tex: real struct wrapping an SDL texture (header stays SDL-free).
+ * w/h = ATLAS PAGE dims (what the SDL texture actually holds), needed to
+ * normalize UV geometry: game submits texel-space coords (subtex
+ * left..right on the page); SDL_Vertex.tex_coord wants 0..1. */
 struct C3D_Tex
 {
 	SDL_Texture* sdl;
+	float w, h;
 };
 
 struct C3D_RenderTarget_s
@@ -631,6 +635,9 @@ C2D_SpriteSheet C2D_SpriteSheetLoad(const char* filename)
 		{
 			SDL_UpdateTexture(tex, NULL, pixels, pageW[p] * 4);
 			SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+			/* page dims for UV normalization in the geometry path */
+			sheet->pageTexs[p]->w = (float)pageW[p];
+			sheet->pageTexs[p]->h = (float)pageH[p];
 			sheet->pageTexs[p]->sdl = tex;      /* bound only when fully loaded */
 		}
 		else
@@ -895,7 +902,7 @@ bool C2D_DrawRectangle(float x, float y, float z, float w, float h,
 	return SDL_RenderGeometry(gd_renderer, NULL, verts, 4, idx, 6);
 }
 
-/* remaining primitive path still stubbed (scope) */
+/* DrawLine still stubbed (no current callers render through it) */
 bool C2D_DrawLine(float x1, float y1, u32 clr1, float x2, float y2, u32 clr2, float thickness, u32 clr3)
 {
 	(void)x1; (void)y1; (void)clr1; (void)x2; (void)y2; (void)clr2; (void)thickness; (void)clr3;
@@ -905,8 +912,32 @@ bool C2D_DrawLine(float x1, float y1, u32 clr1, float x2, float y2, u32 clr2, fl
 bool C2D_DrawTriangle(float x1, float y1, u32 clr1, float x2, float y2, u32 clr2,
                       float x3, float y3, u32 clr3, float depth)
 {
-	(void)x1; (void)y1; (void)clr1; (void)x2; (void)y2; (void)clr2; (void)x3; (void)y3; (void)clr3; (void)depth;
-	return true;
+	/* citro2d real (c2d/base.h:398): per-vertex colored triangle, no
+	 * texture. Renders untextured via SDL_RenderGeometry(NULL texture)
+	 * honoring the renderer draw blend mode. Same fade + view treatment
+	 * as the other draw paths. Used by MotionTrail_DrawWaveTrail. */
+	(void)depth;
+	if (!gd_renderer) return false;
+
+	SDL_Vertex verts[3];
+	const float xs[3] = { x1, x2, x3 };
+	const float ys[3] = { y1, y2, y3 };
+	const u32 clrs[3] = { clr1, clr2, clr3 };
+	for (int i = 0; i < 3; ++i)
+	{
+		SDL_FPoint vp;
+		gd_apply_view(xs[i], ys[i], &vp.x, &vp.y);
+		verts[i].position = vp;
+		u32 c = clrs[i];
+		verts[i].color.r = (float)(c & 0xff) / 255.0f * gd_fade_color_factor(gd_fade_r);
+		verts[i].color.g = (float)((c >> 8) & 0xff) / 255.0f * gd_fade_color_factor(gd_fade_g);
+		verts[i].color.b = (float)((c >> 16) & 0xff) / 255.0f * gd_fade_color_factor(gd_fade_b);
+		verts[i].color.a = (float)((c >> 24) & 0xff) / 255.0f;
+		verts[i].tex_coord.x = 0.0f;
+		verts[i].tex_coord.y = 0.0f;   /* unused with NULL texture */
+	}
+	SDL_SetRenderDrawBlendMode(gd_renderer, gd_active_blend);  /* change_blending state */
+	return SDL_RenderGeometry(gd_renderer, NULL, verts, 3, NULL, 0);
 }
 
 /* ------------------------------------------------------------------ */
@@ -945,9 +976,10 @@ static void gd_tri_flush(void)
 	if (!gd_renderer || gd_tri_n < 3) return;
 
 	C2Di_Context* ctx = C2Di_GetContext();
-	if (!ctx->curTex || !ctx->curTex->sdl)
+	if (!ctx->curTex || !ctx->curTex->sdl ||
+	    ctx->curTex->w <= 0.0f || ctx->curTex->h <= 0.0f)
 	{
-		gd_tri_n = 0;   /* curTex unbound (fallback sheet): drop silently */
+		gd_tri_n = 0;   /* unbound or fallback (no page dims): drop silently */
 		return;
 	}
 
@@ -956,9 +988,16 @@ static void gd_tri_flush(void)
 	{
 		verts[i].position  = gd_tri_vtx[i].pos;
 		verts[i].color     = gd_tri_vtx[i].col;
-		verts[i].tex_coord = gd_tri_vtx[i].uv;
+		/* UV normalixing: the game submits ABSOLUTE PAGE TEXEL coords
+		 * (upstream citro2d divides by texture size in its shader);
+		 * SDL_Vertex.tex_coord is normalized 0..1. Divide by the PAGE
+		 * dims (not subtex, not hardcoded). */
+		verts[i].tex_coord.x = gd_tri_vtx[i].uv.x / ctx->curTex->w;
+		verts[i].tex_coord.y = gd_tri_vtx[i].uv.y / ctx->curTex->h;
 	}
-	SDL_SetTextureBlendMode(ctx->curTex->sdl, gd_active_blend);  /* change_blending state */
+
+	SDL_SetTextureBlendMode(ctx->curTex->sdl, gd_active_blend);
+
 	SDL_RenderGeometry(gd_renderer, ctx->curTex->sdl, verts, 3, NULL, 0);
 	gd_tri_n = 0;
 }
