@@ -1,0 +1,10 @@
+{
+  "attempts":4,
+  "jumps":77,
+  "normal":55,
+  "practice":0,
+  "stars":0,
+  "coin1":false,
+  "coin2":false,
+  "coin3":false
+}
