@@ -4,9 +4,12 @@
 #
 # Requirements:
 #   macOS:  brew install sdl3 mpg123 json-c   (curl/zlib from the macOS SDK)
-#   MSYS2:  pacman -S mingw-w64-x86_64-toolchain mingw-w64-x86_64-SDL3 \
-#                  mingw-w64-x86_64-mpg123 mingw-w64-x86_64-json-c \
-#                  mingw-w64-x86_64-curl python
+#   MSYS2:  pacman -S mingw-w64-x86_64-toolchain \
+#          mingw-w64-x86_64-sdl3 \
+#          mingw-w64-x86_64-mpg123 \
+#         mingw-w64-x86_64-json-c \
+#          mingw-w64-x86_64-curl \
+#          python
 #   ()      build from an MSYS2 MinGW64 shell (mingw32-make)
 # SDL3's pkg-config package is named `sdl3` on all platforms.
 
