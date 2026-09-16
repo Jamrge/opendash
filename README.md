@@ -6,6 +6,7 @@ As for now, this project is just a gd3ds PC Port using a compatibility shim betw
 This will or will not be used as a base for Opendash.
 
 ## TODO
+- Add proper Windows / Linux compiling options
 - Implement keyboard support for typing
 - Implement better desktop keybinds (Quick restart, showing debug menu, esc to pause, etc)
 - Remove Dual Screen and make a singular UI
