@@ -1,12 +1,10 @@
-# gd3ds - Desktop build on SDL3
+# gd3ds build on SDL3
 #
-# Goal: compile project + SDL3 shims and open a 400x480 window ("Opendash
-# Prototype (SDL 3)") with the game loop running and sprite rendering.
 #
 # The original devkitarm/3DS build lives in Makefile.3ds (untouched).
 #
-# Requirements (Homebrew):
-#   brew install sdl3 mpg123 json-c
+# Requirements:
+# sdl3 mpg123 json-c
 # curl and zlib are linked from the macOS SDK.
 #
 # SDL3: pkg-config package is named `sdl3` (verify:
