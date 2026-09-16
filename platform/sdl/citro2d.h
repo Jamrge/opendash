@@ -22,7 +22,11 @@ typedef struct Tex3DS_SubTexture_s
 	u16   width, height;
 } Tex3DS_SubTexture;
 
-/* tex3ds helper used by trail.c */
+/* tex3ds helper used by trail.c (semantics upstream tex3ds.h:127:
+ * "rotated" = packed 90° in the atlas). Our shim inlet stores subtex in
+ * pixel space with top<y<bottom=y+h, so bottom<top is FALSE always -
+ * which is correct: t3s_to_atlas.py never rotates, and trail.c's else
+ * branch samples exactly on our axis-aligned UV space. */
 static inline bool Tex3DS_SubTextureRotated(const Tex3DS_SubTexture* subtex)
 {
 	return subtex->bottom < subtex->top;
@@ -35,6 +39,9 @@ typedef struct C2D_Image
 } C2D_Image;
 
 typedef struct { u32 color; float blend; } C2D_Tint;
+/* per-corner tint model: the game ONLY ever calls C2D_PlainImageTint
+ * (all 4 corners = same color; zero call sites for C2D_SetImageTint or
+ * manual .corners[i] writes), so the shim renders from corners[0]. */
 typedef struct { C2D_Tint corners[4]; } C2D_ImageTint;
 
 typedef struct { float x, y; } C2D_Vector;

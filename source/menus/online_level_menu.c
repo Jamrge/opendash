@@ -634,9 +634,6 @@ void online_level_menu_loop() {
         touch.touchPosition = touchPos;
         touch.did_something = false;
         touch.interacted = false;
-        
-        // Frees a render target, so keep it out of the frame below
-        update_stereo_target();
 
         if (song_data_task.finished) {
             int song_data_result = -3;
@@ -715,18 +712,13 @@ void online_level_menu_loop() {
             draw_touch_effect();
             change_blending(false);
             
-            // Top screen, drawn once per eye when 3D is on
-            for (int eye = 0; begin_top_eye(eye); eye++) {
-                draw_fade();
+            // Top screen
+            C2D_SceneBegin(top);
+            C2D_TargetClear(top, C2D_Color32(0, 0, 0, 255));
+            draw_fade();
+            ui_screen_draw(&default_screen_top);
 
-                begin_eye_layer(DEPTH_UI);
-                ui_screen_draw(&default_screen_top);
-                end_eye_layer();
-
-                begin_eye_layer(DEPTH_POPUP);
-                if(in_info_box) online_level_infobox_draw_top();
-                end_eye_layer();
-            }
+            if(in_info_box) online_level_infobox_draw_top();
             C2D_ViewReset();
             C3D_FrameEnd(0);
 

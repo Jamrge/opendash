@@ -499,8 +499,8 @@ void draw_level_complete() {
 }
 void draw_level_complete_top() {
     if (init) {
-        // Only tick once, no matter how many eyes are drawn
-        if (get_fade_status() && !is_extra_eye()) {
+        // Only tick once
+        if (get_fade_status()) {
             level_complete_loop(1.f/60);
         }
         

@@ -568,15 +568,12 @@ void level_select_loop() {
 
         ui_screen_update(&default_screen, &touch);
         ui_screen_update(&default_screen_top, &touch);
-        
-        // Frees a render target, so keep it out of the frame below
-        update_stereo_target();
 
         do {
             update_touch_effect(DT);
-            
+
             C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
-            
+
             // Bottom screen
             C2D_TargetClear(bot, C2D_Color32(0, 0, 0, 255));
             C2D_SceneBegin(bot);
@@ -588,13 +585,11 @@ void level_select_loop() {
             draw_touch_effect();
             change_blending(false);
 
-            // Top screen, drawn once per eye when 3D is on
-            for (int eye = 0; begin_top_eye(eye); eye++) {
-                begin_eye_layer(DEPTH_UI);
-                ui_screen_draw(&default_screen_top);
-                draw_dots(curr_level_id);
-                end_eye_layer();
-            }
+            // Top screen
+            C2D_SceneBegin(top);
+            C2D_TargetClear(top, C2D_Color32(0, 0, 0, 255));
+            ui_screen_draw(&default_screen_top);
+            draw_dots(curr_level_id);
             C2D_ViewReset();
             C3D_FrameEnd(0);
         } while (handle_fading());

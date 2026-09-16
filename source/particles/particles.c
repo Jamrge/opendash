@@ -494,9 +494,6 @@ void drawParticleSystem(ParticleSystem* ps, float x_offset, float y_offset, floa
     ParticleData* d = &ps->data;
     int count = d->count;
 
-    // Only worth checking per particle when there's actually 3D to show
-    bool use_depth = ps->depth && is_stereo_active();
-
     for (int i = 0; i < count; i++) {
         float x = d->posx[i];
         float y = d->posy[i];
@@ -529,12 +526,6 @@ void drawParticleSystem(ParticleSystem* ps, float x_offset, float y_offset, floa
             // Flip
             x += x_offset;
             y = (GSP_SCREEN_WIDTH - y);
-        }
-
-        // Drift out of the screen as the particle ages, or back into it if inverted
-        if (use_depth && d->totalTimeToLive[i] > 0) {
-            float life = d->timeToLive[i] / d->totalTimeToLive[i];
-            x += get_depth_shift(ps->depth * (ps->depthInwards ? life : 1.f - life));
         }
 
         C2D_ImageTint tint = { 0 };

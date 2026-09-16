@@ -104,7 +104,6 @@ extern bool cheats_used[CHEAT_COUNT];
 extern const char *cheat_names[CHEAT_COUNT];
 
 extern C3D_RenderTarget* top;
-extern C3D_RenderTarget* top_right;
 extern C3D_RenderTarget* bot;
 
 extern int game_state;

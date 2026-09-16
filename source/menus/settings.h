@@ -29,7 +29,6 @@ typedef struct {
 
 typedef struct {
     bool wideEnabled;
-    bool stereoEnabled;
     bool particlesDisabled;
     bool glowEnabled;
     bool yJump;
@@ -58,7 +57,10 @@ typedef struct {
     bool skipSongWarning;
 } SettingState;
 
-extern Setting settings[29];
+/* Number of entries in Setting settings[] (settings.c) — keep in sync
+ * with the array definition: ARRAY_LEN users rely on sizeof(). */
+#define SETTINGS_COUNT 28
+extern Setting settings[SETTINGS_COUNT];
 extern SettingState settingsState;
 
 void settings_init();

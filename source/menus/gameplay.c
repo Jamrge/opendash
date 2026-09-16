@@ -332,8 +332,7 @@ int gameplay_screen_top_loop() {
         ui_run_func_on_tag(&default_screen_top, "percent", ui_enable_element);
     }
 
-    // Extra eyes only redraw, updating twice would run the animations at double speed
-    if (!is_extra_eye()) ui_screen_update(&default_screen_top, &touch);
+    ui_screen_update(&default_screen_top, &touch);
     ui_screen_draw(&default_screen_top);
 
     return false;

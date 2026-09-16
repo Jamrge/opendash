@@ -37,8 +37,6 @@ UILabel *category_name;
 
 bool request_list_reload = false;
 
-void wide_setting(bool checked);
-void stereo_setting(bool checked);
 void practiceMusicSync_setting(bool checked);
 
 const char *category_names[] = {
@@ -57,12 +55,6 @@ bool condition_supports_wide() {
     return model != CFG_MODEL_2DS && !is_citra();
 }
 
-bool condition_supports_3D() {
-    u8 model = get_model();
-
-    return model != CFG_MODEL_2DS && model != CFG_MODEL_N2DSXL;
-}
-
 Setting settings[] = {
     {
         .id = "wideEnabled",
@@ -74,25 +66,8 @@ Setting settings[] = {
         .var = &settingsState.wideEnabled,
         .key = CONFIG_GRAPHICS_PATH "wideEnabled",
 
-        .onChanged = wide_setting,
-        
         .disabledForceValue = false,
         .condition = condition_supports_wide
-    },
-    {
-        .id = "stereoEnabled",
-        .label = "Stereoscopic 3D",
-        .additionalInfo = "Adds depth to the top screen.\nUse the 3D slider, costs some FPS.",
-        .page = PAGE_GRAPHICS, 
-
-        .defaultValue = false,
-        .var = &settingsState.stereoEnabled,
-        .key = CONFIG_GRAPHICS_PATH "stereoEnabled",
-
-        .onChanged = stereo_setting,
-
-        .disabledForceValue = false,
-        .condition = condition_supports_3D
     },
     {
         .id = "particlesDisabled",
@@ -400,31 +375,6 @@ UICheckBox *get_setting_checkbox_by_id(const char *id) {
     }
 
     return NULL;
-}
-
-// Wide and 3D both want the whole top screen, so only one of them gets it
-static void turn_off_setting(const char *id, bool *var) {
-    *var = false;
-
-    UICheckBox *checkbox = get_setting_checkbox_by_id(id);
-
-    if (checkbox) ui_set_checkbox_checked(checkbox, false);
-}
-
-void wide_setting(bool checked) {
-    if (checked) turn_off_setting("stereoEnabled", &settingsState.stereoEnabled);
-}
-
-void stereo_setting(bool checked) {
-    if (!checked) return;
-
-    // No 3D on this console, so don't let the box stay ticked
-    if (!stereo_supported()) {
-        turn_off_setting("stereoEnabled", &settingsState.stereoEnabled);
-        return;
-    }
-
-    turn_off_setting("wideEnabled", &settingsState.wideEnabled);
 }
 
 void practiceMusicSync_setting(bool checked) {

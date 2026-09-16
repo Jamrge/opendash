@@ -202,10 +202,7 @@ void search_menu_loop() {
         touch.interacted = false;
 
         if (!in_disclaimer && !in_server_switcher && !in_clear_search_filters && !in_filters) ui_screen_update(&default_screen, &touch);
-        
-        // Frees a render target, so keep it out of the frame below
-        update_stereo_target();
-        
+
         if (in_filters) { // Bro stop putting this in the rendering do while
             int returned = search_filters_loop();
             if (returned) {
@@ -254,14 +251,11 @@ void search_menu_loop() {
             draw_touch_effect();
             change_blending(false);
 
-            // Top screen, drawn once per eye when 3D is on
-            for (int eye = 0; begin_top_eye(eye); eye++) {
-                draw_fade();
-
-                begin_eye_layer(DEPTH_UI);
-                ui_screen_draw(&default_screen_top);
-                end_eye_layer();
-            }
+            // Top screen
+            C2D_SceneBegin(top);
+            C2D_TargetClear(top, C2D_Color32(0, 0, 0, 255));
+            draw_fade();
+            ui_screen_draw(&default_screen_top);
             C2D_ViewReset();
             C3D_FrameEnd(0);
         } while (handle_fading());

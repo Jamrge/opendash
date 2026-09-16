@@ -113,7 +113,6 @@ enum
 
 /* os */
 void  osSetSpeedupEnable(bool enable);
-float osGet3DSliderState(void);
 
 /* memalign: not in macOS libc, backed by posix_memalign */
 void* memalign(size_t alignment, size_t size);
@@ -138,7 +137,7 @@ struct mallinfo mallinfo(void);
 /* ------------------------------------------------------------------ */
 
 typedef enum { GFX_TOP = 0, GFX_BOTTOM = 1 } gfxScreen_t;
-typedef enum { GFX_LEFT = 0, GFX_RIGHT = 1 } gfx3dSide_t;
+typedef enum { GFX_LEFT = 0 } gfx3dSide_t;  /* right eye removed with stereoscopic 3D */
 
 #define GSP_SCREEN_WIDTH        240
 #define GSP_SCREEN_HEIGHT_TOP   400
@@ -150,7 +149,6 @@ void gfxExit(void);
 void gfxSwapBuffers(void);
 void gfxFlushBuffers(void);
 void gfxSetDoubleBuffering(bool enable);
-void gfxSet3D(bool enable);
 void gfxSetWide(bool enable);
 
 void gspWaitForVBlank(void);

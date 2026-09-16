@@ -101,7 +101,6 @@ void gfxExit(void)
 void gfxSwapBuffers(void)  { shim_present_frame(); }
 void gfxFlushBuffers(void) {}
 void gfxSetDoubleBuffering(bool enable) { (void)enable; }
-void gfxSet3D(bool enable)  { (void)enable; }
 void gfxSetWide(bool enable){ (void)enable; }
 void gspWaitForVBlank(void) { SDL_Delay(16); }
 
@@ -162,7 +161,6 @@ Result CFGU_GetSystemModel(u8* model)
 }
 
 void osSetSpeedupEnable(bool enable) { (void)enable; }
-float osGet3DSliderState(void) { return 0.0f; }  /* stereo 3D off */
 
 /* 3DS volume slider is 0..63; desktop reports max. */
 Result HIDUSER_GetSoundVolume(u8* volume)
