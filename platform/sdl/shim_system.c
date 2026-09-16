@@ -303,19 +303,37 @@ static u32 scan_keys(const bool* keys)
 	return k;
 }
 
+static void gd_ring_push_pad(u32 keys, s16 dx, s16 dy);
+static void gd_ring_push_touch(u16 px, u16 py, bool valid);
+static void gd_ring_feed_event(const SDL_Event* ev, u64 scan_tick, u64 scan_ns);
+
 void hidScanInput(void)
 {
 	if (gd_sdl_ready)
 	{
+		/* Opción B (240Hz input real): each scan drains the SDL event
+		 * queue and writes ring samples into hidSharedMem with real
+		 * timestamps, so precise_input.c sees a live sysmodule ring. */
+		u64 scan_tick = SDL_GetPerformanceCounter();
+		u64 scan_ns   = SDL_GetTicksNS();
+
 		SDL_Event ev;
 		while (SDL_PollEvent(&ev))
 		{
-			if (ev.type == SDL_EVENT_QUIT) gd_quit = true;
+			if (ev.type == SDL_EVENT_QUIT) { gd_quit = true; continue; }
+			gd_ring_feed_event(&ev, scan_tick, scan_ns);
 		}
 		SDL_PumpEvents();                 /* refresh device state arrays */
 		const bool* keys = SDL_GetKeyboardState(NULL);
 		g_keys_prev = g_keys_held;
 		g_keys_held = scan_keys(keys);
+
+		/* end-of-scan checkpoint sample(s): full current state */
+		gd_ring_push_pad(g_keys_held, g_circle.dx, g_circle.dy);
+		float mx = 0, my = 0;
+		u32 mbits = SDL_GetMouseState(&mx, &my);
+		bool touch_now = (mbits & SDL_BUTTON_LMASK) && scan_touch(mx, my);
+		gd_ring_push_touch(g_touch.px, g_touch.py, touch_now);
 	}
 	else
 	{
@@ -333,10 +351,172 @@ u32 hidKeysUp(void)   { return g_keys_up; }
 void hidTouchRead(touchPosition* pos)  { if (pos) *pos = g_touch; }
 void hidCircleRead(circlePosition* pos){ if (pos) *pos = g_circle; }
 
-/* HID shared memory: 3DS-specific. Backed by a zeroed dummy buffer so
- * precise_input.c can read it safely until its SDL port (phase 3). */
+/* HID shared memory ring (Opción B): emulates the 3DS HID sysmodule
+ * shared-memory ring with live samples backed by real SDL3 events, so
+ * precise_input.c works unchanged (the layout was verified against the
+ * libctru.a disassembly for PAD and hid.h's documented 0xA8 touch base;
+ * the touch ring offset (0xC8) matches the on-hardware offsets the
+ * project already uses).
+ *
+ *   PAD   section: +0x00 u64 lap tick, +0x08 u64 prev lap tick,
+ *                  +0x10 u32 sample counter (mono), +0x28 8 slots ×
+ *                  { u32 keys, s16 cpad_dx, s16 cpad_dy, u32 attr }
+ *   TOUCH section: +0xA8 u64, +0xB0 u64, +0xB8 u32 idx, +0xC8
+ *                  8 slots × { u32 (py<<16)|px, u32 valid }
+ * Laps: tick fields move every 8 samples written (the reader derives
+ * sample_interval = (lap − prev_lap)/8; lap tick = SDL perf counter at
+ * lap open). The sample index (-0x10 / +0xB8) is a monotonic counter;
+ * slots are addressed as (idx & 7). */
 static u32 gd_hid_shared_mem[128];
 vu32* hidSharedMem = gd_hid_shared_mem;
+
+#define GD_RING_SLOTS 8
+
+static u32 gd_ring_pad_idx   = 0;
+static u32 gd_ring_touch_idx = 0;
+static u32 gd_ring_pad_state = 0;   /* running keys mask (event-applied) */
+static u64 gd_last_sample_tick = 1;  /* last tick written to the ring (monotonic) */
+
+/* advance a section's lap every 8 samples: prev = current, current = now */
+static void gd_ring_lap_tick(u32* slot, u32 base_word)
+{
+	if ((*slot % GD_RING_SLOTS) == 0)
+	{
+		gd_hid_shared_mem[base_word + 2] = gd_hid_shared_mem[base_word + 0];
+		gd_hid_shared_mem[base_word + 3] = gd_hid_shared_mem[base_word + 1];
+		u64 now = (u64)SDL_GetPerformanceCounter();
+		gd_hid_shared_mem[base_word + 0] = (u32)(now & 0xffffffffu);
+		gd_hid_shared_mem[base_word + 1] = (u32)(now >> 32);
+	}
+}
+
+/* one PAD sample: keys + circle pad + attr, slot (idx&7); idx++ mono */
+static void gd_ring_push_pad(u32 keys, s16 dx, s16 dy)
+{
+	gd_ring_lap_tick(&gd_ring_pad_idx, 0);
+
+	u32* slot = &gd_hid_shared_mem[(0x28 / 4) + (gd_ring_pad_idx % GD_RING_SLOTS) * 4];
+	slot[0] = keys;
+	slot[1] = (u32)(u16)dx;
+	slot[2] = (u32)(u16)dy;
+	slot[3] = 0;   /* sysmodule sample attribute */
+
+	gd_hid_shared_mem[4] = gd_ring_pad_idx;   /* sample counter @0x10 */
+	if (gd_ring_pad_idx < 0xffffffffu) gd_ring_pad_idx++;
+}
+
+/* one TOUCH sample: packed px/py + valid flag */
+static void gd_ring_push_touch(u16 px, u16 py, bool valid)
+{
+	gd_ring_lap_tick(&gd_ring_touch_idx, 0xA8 / 4);
+
+	u32* slot = &gd_hid_shared_mem[(0xC8 / 4) + (gd_ring_touch_idx % GD_RING_SLOTS) * 2];
+	slot[0] = ((u32)py << 16) | (u32)px;
+	slot[1] = valid ? 1u : 0u;
+
+	gd_hid_shared_mem[0xA8 / 4 + 4] = gd_ring_touch_idx;   /* sample counter @0xB8 */
+	if (gd_ring_touch_idx < 0xffffffffu) gd_ring_touch_idx++;
+}
+
+/* KEY_* bits contributed by a single scancode (mirrors scan_keys, so the
+ * incremental ring writer and the state scanner agree on the mapping) */
+static u32 gd_bits_for_scancode(SDL_Scancode sc)
+{
+	switch (sc)
+	{
+		case SDL_SCANCODE_SPACE: case SDL_SCANCODE_Z: return KEY_A;
+		case SDL_SCANCODE_X:     case SDL_SCANCODE_ESCAPE: return KEY_B;
+		case SDL_SCANCODE_C: return KEY_X;
+		case SDL_SCANCODE_V: return KEY_Y;
+		case SDL_SCANCODE_Q: return KEY_L;
+		case SDL_SCANCODE_E: return KEY_R;
+		case SDL_SCANCODE_1: return KEY_ZL;
+		case SDL_SCANCODE_2: return KEY_ZR;
+		case SDL_SCANCODE_RETURN: case SDL_SCANCODE_KP_ENTER: return KEY_START;
+		case SDL_SCANCODE_TAB: return KEY_SELECT;
+		case SDL_SCANCODE_UP:    return KEY_DUP;
+		case SDL_SCANCODE_DOWN:  return KEY_DDOWN;
+		case SDL_SCANCODE_LEFT:  return KEY_DLEFT;
+		case SDL_SCANCODE_RIGHT: return KEY_DRIGHT;
+		case SDL_SCANCODE_W: return KEY_CPAD_UP;
+		case SDL_SCANCODE_S: return KEY_CPAD_DOWN;
+		case SDL_SCANCODE_A: return KEY_CPAD_LEFT;
+		case SDL_SCANCODE_D: return KEY_CPAD_RIGHT;
+		default: return 0;
+	}
+}
+
+/* Feed one SDL event into the ring with a real per-event timestamp.
+ * Events under the current scan get a clock inside (prev_scan..now):
+ * tick = scan_tick - (scan_ns - ev.timestamp), converted from the ns
+ * domain to the perf-counter domain, clamped monotonic. */
+static void gd_ring_feed_event(const SDL_Event* ev, u64 scan_tick, u64 scan_ns)
+{
+	u64 ev_tick = scan_tick;   /* fallback: end of frame */
+	if (ev->common.timestamp && ev->common.timestamp < scan_ns && scan_ns > scan_tick)
+	{
+		u64 age_ns = scan_ns - ev->common.timestamp;
+		if (age_ns < scan_tick) ev_tick = scan_tick - age_ns;   /* ns ≈ ticks when freq=1e9 */
+		if (ev_tick < gd_last_sample_tick + 1) ev_tick = gd_last_sample_tick + 1;
+	}
+
+	switch (ev->type)
+	{
+		case SDL_EVENT_KEY_DOWN:
+		case SDL_EVENT_KEY_UP:
+		{
+			u32 bits = gd_bits_for_scancode(ev->key.scancode);
+			if (bits == 0) break;
+			if (ev->type == SDL_EVENT_KEY_DOWN) gd_ring_pad_state |= bits;
+			else                                gd_ring_pad_state &= ~bits;
+			gd_ring_push_pad(gd_ring_pad_state, 0, 0);
+			gd_last_sample_tick = ev_tick;
+			break;
+		}
+
+		case SDL_EVENT_MOUSE_BUTTON_DOWN:
+		case SDL_EVENT_MOUSE_BUTTON_UP:
+		{
+			bool inside = scan_touch(ev->button.x, ev->button.y);
+			bool down = (ev->type == SDL_EVENT_MOUSE_BUTTON_DOWN)
+			            && ev->button.button == SDL_BUTTON_LEFT;
+			gd_ring_push_touch(g_touch.px, g_touch.py, down && inside);
+			gd_last_sample_tick = ev_tick;
+			break;
+		}
+
+		case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
+		case SDL_EVENT_GAMEPAD_BUTTON_UP:
+		{
+			u32 bits = 0;
+			switch (ev->gbutton.button)
+			{
+				case SDL_GAMEPAD_BUTTON_SOUTH: bits = KEY_A; break;
+				case SDL_GAMEPAD_BUTTON_EAST:  bits = KEY_B; break;
+				case SDL_GAMEPAD_BUTTON_WEST:  bits = KEY_X; break;
+				case SDL_GAMEPAD_BUTTON_NORTH: bits = KEY_Y; break;
+				case SDL_GAMEPAD_BUTTON_LEFT_SHOULDER:  bits = KEY_L; break;
+				case SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER: bits = KEY_R; break;
+				case SDL_GAMEPAD_BUTTON_START:  bits = KEY_START; break;
+				case SDL_GAMEPAD_BUTTON_BACK:   bits = KEY_SELECT; break;
+				case SDL_GAMEPAD_BUTTON_DPAD_UP:    bits = KEY_DUP; break;
+				case SDL_GAMEPAD_BUTTON_DPAD_DOWN:  bits = KEY_DDOWN; break;
+				case SDL_GAMEPAD_BUTTON_DPAD_LEFT:  bits = KEY_DLEFT; break;
+				case SDL_GAMEPAD_BUTTON_DPAD_RIGHT: bits = KEY_DRIGHT; break;
+				default: break;
+			}
+			if (bits == 0) break;
+			if (ev->type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) gd_ring_pad_state |= bits;
+			else                                           gd_ring_pad_state &= ~bits;
+			gd_ring_push_pad(gd_ring_pad_state, 0, 0);
+			gd_last_sample_tick = ev_tick;
+			break;
+		}
+
+		default:
+			break;   /* unrelated event: no ring sample */
+	}
+}
 
 /* ------------------------------------------------------------------ */
 /* Threads + sync (SDL3: SDL_Thread / SDL_Semaphore / CAS spinlock)     */
