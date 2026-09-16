@@ -21,9 +21,14 @@
 
 #undef fopen
 #undef mkdir
+#undef access
+#include <unistd.h>
 
 #include <SDL3/SDL.h>
 #include "shim_internal.h"
+#include <mpg123.h>
+#undef mpg123_open    /* call the real mpg123_open inside the wrapper */
+extern int mpg123_open(mpg123_handle* mh, const char* path);
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -583,36 +588,276 @@ void LightEvent_Clear(LightEvent* ev)
 }
 
 /* ------------------------------------------------------------------ */
-/* ndsp: no-op audio in this phase (pause state tracked for the player) */
 /* ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------ */
+/* ndsp: infra de audio real sobre streams SDL3                          */
+/*                                                                      */
+/* Modelo: cada canal ndsp tiene un SDL_AudioStream (src = PCM16LE      */
+/* mono/stereo al rate del archivo, dst = spec del device) bindeado a    */
+/* un device default; SDL mezcla los streams en su device thread (igual  */
+/* que el DSP del 3DS). Los wave bufs del juego marcan DONE cuando SDL   */
+/* de verdad los consumió (hilo "pump" interno + callback registrado     */
+/* por ndspSetCallback, igual que el ndsp hardware). Pausa = vaciar la   */
+/* cola pendiente YA (fidelidad, sin cola sonando tras la pausa).        */
+/* ------------------------------------------------------------------ */
+#define GD_DSP_CHANNELS 24
+#define GD_WBUF_QUEUE   32   /* FIFO de bufs submitteados por canal */
 
-static bool g_channel_paused[24];
+typedef struct
+{
+	SDL_AudioStream* stream;
+	SDL_Mutex* lock;
+	int    rate;      /* src spec del canal */
+	int    channels;
+	float  gain;
+	bool   paused;
+	/* FIFO de bufs submitteados (para marcar DONE por orden de consumo) */
+	ndspWaveBuf* rq[GD_WBUF_QUEUE];
+	int          rq_bytes[GD_WBUF_QUEUE];
+	int          rq_head, rq_count;
+	u64    submitted;   /* bytes puestos en el stream (total) */
+	u64    done;        /* bytes ya marcados DONE */
+} gd_dsp_channel;
 
-Result ndspInit(void) { return 0; }
-void ndspExit(void) {}
+static gd_dsp_channel    gd_dsp[GD_DSP_CHANNELS];
+static SDL_AudioDeviceID gd_dsp_dev = 0;
+static SDL_Thread*       gd_dsp_pump = NULL;
+static volatile bool     gd_dsp_pump_quit = false;
+static void (*gd_dsp_callback)(void*) = NULL;
+static void*             gd_dsp_callback_ud = NULL;
+
+static void gd_dsp_flush_queue_locked(gd_dsp_channel* ch)
+{
+	/* marca todos los bufs pendientes como DONE (vuelven al juego) y
+	 * dispara el callback si hubo alguno */
+	bool fired = false;
+	while (ch->rq_count > 0)
+	{
+		ndspWaveBuf* buf = ch->rq[ch->rq_head];
+		if (buf) buf->status = NDSP_WBUF_DONE;
+		ch->rq_head = (ch->rq_head + 1) % GD_WBUF_QUEUE;
+		ch->rq_count--;
+		fired = true;
+	}
+	ch->done = ch->submitted;
+	if (fired && gd_dsp_callback) gd_dsp_callback(gd_dsp_callback_ud);
+}
+
+static void gd_dsp_rebuild_stream(gd_dsp_channel* ch)
+{
+	if (ch->stream)
+	{
+		SDL_DestroyAudioStream(ch->stream);   /* unbind implícito */
+		ch->stream = NULL;
+	}
+	if (gd_dsp_dev == 0) return;
+
+	SDL_AudioSpec src, dst;
+	SDL_zero(src);
+	SDL_zero(dst);
+	src.format   = SDL_AUDIO_S16LE;
+	src.channels = ch->channels > 0 ? ch->channels : 2;
+	src.freq     = ch->rate > 0 ? ch->rate : 48000;
+	if (!SDL_GetAudioDeviceFormat(gd_dsp_dev, &dst, NULL))
+		SDL_zero(dst);
+	ch->stream = SDL_CreateAudioStream(&src, &dst);
+	if (ch->stream)
+	{
+		SDL_SetAudioStreamGain(ch->stream, ch->gain);
+		SDL_BindAudioStream(gd_dsp_dev, ch->stream);
+	}
+}
+
+static int gd_dsp_pump_entry(void* unused)
+{
+	(void)unused;
+	while (!gd_dsp_pump_quit)
+	{
+		for (int i = 0; i < GD_DSP_CHANNELS; ++i)
+		{
+			gd_dsp_channel* ch = &gd_dsp[i];
+			SDL_AudioStream* stream = NULL;
+			bool paused = false;
+			SDL_LockMutex(ch->lock);
+			stream = ch->stream;
+			paused = ch->paused;
+			SDL_UnlockMutex(ch->lock);
+
+			bool to_fire = false;
+			if (stream && !paused)
+			{
+				SDL_LockAudioStream(stream);
+				int avail = SDL_GetAudioStreamAvailable(stream);
+				SDL_UnlockAudioStream(stream);
+
+				u64 consumed = ch->submitted - (u64)avail;
+				SDL_LockMutex(ch->lock);
+				while (ch->rq_count > 0 &&
+				       consumed >= ch->done + (u64)ch->rq_bytes[ch->rq_head])
+				{
+					if (ch->rq[ch->rq_head])
+						ch->rq[ch->rq_head]->status = NDSP_WBUF_DONE;
+					ch->done += (u64)ch->rq_bytes[ch->rq_head];
+					ch->rq_head = (ch->rq_head + 1) % GD_WBUF_QUEUE;
+					ch->rq_count--;
+					to_fire = true;
+				}
+				SDL_UnlockMutex(ch->lock);
+			}
+			if (to_fire && gd_dsp_callback)
+				gd_dsp_callback(gd_dsp_callback_ud);
+		}
+		SDL_Delay(4);
+	}
+	return 0;
+}
+
+Result ndspInit(void)
+{
+	SDL_zero(gd_dsp);
+	for (int ch = 0; ch < GD_DSP_CHANNELS; ++ch)
+	{
+		gd_dsp[ch].lock = SDL_CreateMutex();
+		gd_dsp[ch].gain = 1.0f;
+	}
+
+	if (!SDL_InitSubSystem(SDL_INIT_AUDIO))
+		return -1;
+
+	gd_dsp_dev = SDL_OpenAudioDevice(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, NULL);
+	if (gd_dsp_dev == 0) return -1;
+
+	gd_dsp_pump_quit = false;
+	gd_dsp_pump = SDL_CreateThread(gd_dsp_pump_entry, "gd3ds-dsp", NULL);
+	return 0;
+}
+
+void ndspExit(void)
+{
+	gd_dsp_pump_quit = true;
+	if (gd_dsp_pump) { SDL_WaitThread(gd_dsp_pump, NULL); gd_dsp_pump = NULL; }
+
+	for (int ch = 0; ch < GD_DSP_CHANNELS; ++ch)
+	{
+		gd_dsp_channel* c = &gd_dsp[ch];
+		if (c->stream) SDL_DestroyAudioStream(c->stream);
+		if (c->lock) SDL_DestroyMutex(c->lock);
+		SDL_zero(*c);
+	}
+	if (gd_dsp_dev) { SDL_CloseAudioDevice(gd_dsp_dev); gd_dsp_dev = 0; }
+}
+
 void ndspSetOutputMode(int mode) { (void)mode; }
-void ndspSetCallback(void (*callback)(void*), void* user) { (void)callback; (void)user; }
-void ndspChnReset(int channel) { if (channel >= 0 && channel < 24) g_channel_paused[channel] = false; }
-void ndspChnSetMix(int channel, const float* mix) { (void)channel; (void)mix; }
-void ndspChnSetRate(int channel, float rate) { (void)channel; (void)rate; }
-void ndspChnSetFormat(int channel, int format) { (void)channel; (void)format; }
+
+void ndspSetCallback(void (*callback)(void*), void* user)
+{
+	gd_dsp_callback = callback;
+	gd_dsp_callback_ud = user;
+}
+
+void ndspChnReset(int channel)
+{
+	if (channel < 0 || channel >= GD_DSP_CHANNELS) return;
+	gd_dsp_channel* ch = &gd_dsp[channel];
+	if (ch->stream)
+	{
+		SDL_LockAudioStream(ch->stream);
+		SDL_ClearAudioStream(ch->stream);
+		SDL_UnlockAudioStream(ch->stream);
+	}
+	SDL_LockMutex(ch->lock);
+	gd_dsp_flush_queue_locked(ch);
+	SDL_UnlockMutex(ch->lock);
+	ch->paused = false;
+}
+
+void ndspChnSetMix(int channel, const float* mix)
+{
+	if (channel < 0 || channel >= GD_DSP_CHANNELS) return;
+	gd_dsp_channel* ch = &gd_dsp[channel];
+	ch->gain = (mix ? (mix[0] + mix[1]) * 0.5f : 1.0f);
+	if (ch->stream) SDL_SetAudioStreamGain(ch->stream, ch->gain);
+}
+
+void ndspChnSetRate(int channel, float rate)
+{
+	if (channel < 0 || channel >= GD_DSP_CHANNELS) return;
+	gd_dsp_channel* ch = &gd_dsp[channel];
+	ch->rate = (int)rate;
+	gd_dsp_rebuild_stream(ch);   /* crea si falta / reconstruye si cambió spec */
+}
+
+void ndspChnSetFormat(int channel, int format)
+{
+	if (channel < 0 || channel >= GD_DSP_CHANNELS) return;
+	gd_dsp_channel* ch = &gd_dsp[channel];
+	ch->channels = (format == NDSP_FORMAT_STEREO_PCM16) ? 2 : 1;
+	gd_dsp_rebuild_stream(ch);   /* crea si falta / reconstruye si cambió spec */
+}
+
 void ndspChnSetInterp(int channel, int type) { (void)channel; (void)type; }
+   /* la conversión/interp de sample rate la hace SDL_AudioStream src→dst */
+
 void ndspChnSetPaused(int channel, bool paused)
 {
-	if (channel >= 0 && channel < 24) g_channel_paused[channel] = paused;
+	if (channel < 0 || channel >= GD_DSP_CHANNELS) return;
+	gd_dsp_channel* ch = &gd_dsp[channel];
+	ch->paused = paused;
+	if (paused && ch->stream)
+	{
+		/* fidelidad: vaciar la cola pendiente YA (sin tail sonando).
+		 * los bufs pendientes pasan a DONE (vuelven al juego) y el
+		 * tracking queda coherente: done = submitted tras flush. */
+		SDL_LockAudioStream(ch->stream);
+		SDL_ClearAudioStream(ch->stream);
+		SDL_UnlockAudioStream(ch->stream);
+		SDL_LockMutex(ch->lock);
+		gd_dsp_flush_queue_locked(ch);
+		SDL_UnlockMutex(ch->lock);
+	}
 }
+
 bool ndspChnIsPaused(int channel)
 {
-	if (channel >= 0 && channel < 24) return g_channel_paused[channel];
-	return false;
+	if (channel < 0 || channel >= GD_DSP_CHANNELS) return false;
+	return gd_dsp[channel].paused;
 }
+
 void ndspChnWaveBufAdd(int channel, ndspWaveBuf* buf)
 {
-	(void)channel;
-	if (buf) buf->status = NDSP_WBUF_DONE;  /* consumed instantly: thread parks */
+	if (channel < 0 || channel >= GD_DSP_CHANNELS || !buf) return;
+	if (buf->status != NDSP_WBUF_DONE && buf->status != NDSP_WBUF_FREE) return;
+
+	gd_dsp_channel* ch = &gd_dsp[channel];
+	if (!ch->lock) { buf->status = NDSP_WBUF_DONE; return; }
+	if (!ch->stream) /* red de seguridad: create-on-demand si faltó init del canal */
+	{
+		gd_dsp_rebuild_stream(ch);
+	}
+	if (!ch->stream) { buf->status = NDSP_WBUF_DONE; return; }
+
+	int bytes = (int)buf->nsamples * (ch->channels > 0 ? ch->channels : 1) * 2;  /* PCM16 */
+	if (bytes <= 0) { buf->status = NDSP_WBUF_DONE; return; }
+
+	SDL_LockMutex(ch->lock);
+	bool ok = SDL_PutAudioStreamData(ch->stream, buf->data_pcm16, bytes);
+	if (ok && ch->rq_count < GD_WBUF_QUEUE)
+	{
+		int tail = (ch->rq_head + ch->rq_count) % GD_WBUF_QUEUE;
+		ch->rq[tail] = buf;
+		ch->rq_bytes[tail] = bytes;
+		ch->rq_count++;
+		ch->submitted += (u64)bytes;
+		buf->status = NDSP_WBUF_QUEUED;
+		SDL_UnlockMutex(ch->lock);
+		return;
+	}
+	SDL_UnlockMutex(ch->lock);
+	buf->status = NDSP_WBUF_DONE;   /* sin cola o sin stream: reuso seguro */
 }
 
 void DSP_FlushDataCache(const void* data, size_t size) { (void)data; (void)size; }
+
 
 /* ------------------------------------------------------------------ */
 /* console (error screens / debug output)                               */
@@ -716,4 +961,18 @@ int gd3ds_mkdir(const char* path, mode_t mode)
 		}
 	}
 	return gd_system_mkdir(tmp, mode);
+}
+
+int gd3ds_access(const char* path, int mode)
+{
+	char translated[1024];
+	gd_translate_path(path, translated, sizeof(translated));
+	return access(translated, mode);     /* real POSIX access */
+}
+
+int gd3ds_mpg_open(mpg123_handle* mh, const char* path)
+{
+	char translated[1024];
+	gd_translate_path(path, translated, sizeof(translated));
+	return mpg123_open(mh, translated);
 }

@@ -330,6 +330,11 @@ SwkbdButton swkbdInputText(SwkbdState* swkbd, char* buf, size_t bufSize);
  */
 FILE* gd3ds_fopen(const char* path, const char* mode);
 int   gd3ds_mkdir(const char* path, mode_t mode);
+int   gd3ds_access(const char* path, int mode);
+struct mpg123_handle_struct;   /* completed later by <mpg123.h> */
+int   gd3ds_mpg_open(struct mpg123_handle_struct* mh, const char* path);
 
 #define fopen  gd3ds_fopen
 #define mkdir  gd3ds_mkdir
+#define access gd3ds_access
+#define mpg123_open gd3ds_mpg_open
