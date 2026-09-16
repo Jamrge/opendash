@@ -33,7 +33,12 @@ ifeq ($(HOST),windows)
   # network.c includes <sys/socket.h>/<netinet/in.h>/<arpa/inet.h> which
   # MinGW does not ship; wincompat provides harmless stubs (all real
   # networking goes through curl).
+  # GCC >= 14 (MSYS2 ships 14+) promotes several C99 type-compat warnings
+  # to hard errors; mp3_player.c relies on newlib's int32_t == long
+  # typedef identity for mpg123_getformat(&rate,...), which holds on 3DS
+  # but not under MinGW's typedef names -> downgrade back to warning.
   CFLAGS := -std=gnu11 -O2 -g -Wall \
+	-Wno-error=incompatible-pointer-types \
 	-Iplatform/sdl \
 	-Iplatform/sdl/wincompat \
 	-Isource \
