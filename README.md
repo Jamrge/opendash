@@ -4,7 +4,6 @@
 gd3ds pc port using a compatibility shim between sdl3 and citro
 
 ## BUGS THAT NEED TO BE FIXED
-- Trails don't work correctly
 - 240hz input doesn't work
 - No particles is a bit broken
 - everything
