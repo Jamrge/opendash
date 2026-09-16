@@ -991,29 +991,11 @@ void draw_p1_trail(Player *player, int player_id) {
 
 
 void draw_player(Player *player) {
-    /* [DEBUG SPAWN] log #7a (entrada a draw_player) */
-    fprintf(stderr, "[DEBUG SPAWN] draw_player: gm=%d x=%.1f y=%.1f dead=%d respawn={active=%d hide=%d}\n",
-            player->gamemode, player->x, player->y,
-            (int)state.dead,
-            state.respawn_effect_data.active ? 1 : 0,
-            state.respawn_effect_data.hide_player ? 1 : 0);
-
     // Don't draw player if dead
-    if (state.dead) {
-        /* [DEBUG SPAWN] E1: state.dead == true */
-        fprintf(stderr, "[DEBUG SPAWN] draw_player E1: state.dead=%d -> return sin dibujar\n",
-                (int)state.dead);
-        return;
-    }
+    if (state.dead) return;
 
     // Don't draw player if respawning and should hide
-    if (state.respawn_effect_data.active && state.respawn_effect_data.hide_player) {
-        /* [DEBUG SPAWN] E2: efecto respawn oculta al player */
-        fprintf(stderr, "[DEBUG SPAWN] draw_player E2: respawn.active=%d hide_player=%d -> return sin dibujar\n",
-                state.respawn_effect_data.active ? 1 : 0,
-                state.respawn_effect_data.hide_player ? 1 : 0);
-        return;
-    }
+    if (state.respawn_effect_data.active && state.respawn_effect_data.hide_player) return;
 
     float calc_x = ((player->x - state.camera_x));
     float calc_y = SCREEN_HEIGHT - ((player->y - state.camera_y));

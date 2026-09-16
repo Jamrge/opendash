@@ -214,13 +214,6 @@ void init_player(Player *player) {
 
     clear_slope_data(player);
     clear_snap_data(player);
-
-    /* [DEBUG SPAWN] log #1 */
-    fprintf(stderr, "[DEBUG SPAWN] init_player: gm=%d mini=%d x=%.1f y=%.1f cube=%d ship=%d ball=%d ufo=%d wave=%d\n",
-            player->gamemode, player->mini, player->x, player->y,
-            player->player_icons.cube, player->player_icons.ship,
-            player->player_icons.ball, player->player_icons.ufo,
-            player->player_icons.wave);
 }
 
 void init_state() {
@@ -389,10 +382,6 @@ void init_variables() {
     p1_trail = false;
 
     clear_bg_flash();
-    /* [DEBUG SPAWN] log #2 (condicion del respawn al entrar) */
-    fprintf(stderr, "[DEBUG SPAWN] init_variables: game_state=%d attempts=%d -> will respawn=%s\n",
-            (int)game_state, state.current_data.attempts,
-            (game_state == STATE_GAME && state.current_data.attempts != 1) ? "YES" : "no");
     if (game_state == STATE_GAME && state.current_data.attempts != 1) start_respawn_effect();
 }
 
@@ -527,8 +516,6 @@ void play_menu_song() {
 
 void start_respawn_effect() {
     RespawnEffectData *data = &state.respawn_effect_data;
-    /* [DEBUG SPAWN] log #3a */
-    fprintf(stderr, "[DEBUG SPAWN] start_respawn_effect: active->true\n");
     data->active = true;
     data->timer = RESPAWN_EFFECT_DURATION;
     data->state = RESPAWN_EFFECT_HIDE_PLAYER;
@@ -539,10 +526,6 @@ void start_respawn_effect() {
 void handle_respawn_effect() {
     RespawnEffectData *data = &state.respawn_effect_data;
     if (!data->active) return;
-
-    /* [DEBUG SPAWN] log #3b (transiciones del efecto) */
-    fprintf(stderr, "[DEBUG SPAWN] handle_respawn: state=%d timer=%.3f hide=%d remaining=%d\n",
-            data->state, data->timer, data->hide_player, data->remaining);
 
     // Run respawn state
     switch (data->state) {

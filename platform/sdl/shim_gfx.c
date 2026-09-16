@@ -235,11 +235,6 @@ bool C2D_SceneBegin(C3D_RenderTarget* target)
 			g_targets[target->base.screen] = target;
 		SDL_SetTextureBlendMode(target->base.tex, SDL_BLENDMODE_NONE);  /* direct screen copy, alpha-independent */
 		SDL_SetRenderTarget(gd_renderer, target->base.tex);
-		/* [DEBUG SPAWN] log L3 (target activo por escena) */
-		fprintf(stderr, "[DEBUG SPAWN] SceneBegin screen=%d(%s) tex=%p\n",
-		        (int)target->base.screen,
-		        (int)target->base.screen == GFX_TOP ? "TOP" : "BOTTOM",
-		        (void*)target->base.tex);
 	}
 	else
 	{
@@ -402,10 +397,6 @@ void C3D_SetScissor(GPU_SCISSORMODE mode, int left, int top, int right, int bott
 
 	if (clip.w < 0 || clip.h < 0) clip.w = 0; /* degenerate: keep SDL happy */
 	if (clip.h < 0) clip.h = 0;
-
-	/* temp debug (compare against the ui_list panel rect) */
-	fprintf(stderr, "[shim][scissor] mode=%d gpu=(l%d t%d r%d b%d) -> clip=(%d,%d %dx%d)\n",
-	        (int)mode, left, top, right, bottom, clip.x, clip.y, clip.w, clip.h);
 
 	SDL_SetRenderClipRect(gd_renderer, &clip);
 }
@@ -803,30 +794,6 @@ static bool gd_render_sprite(C3D_Tex* tex, const Tex3DS_SubTexture* subtex,
 	SDL_FPoint center;
 	center.x = cx * dw;
 	center.y = cy * dh;
-
-	/* [DEBUG SPAWN] log L2 (blit: target/subtex/dst/view) */
-	static int gameplay_dump = 0;
-	bool in_gameplay = (g_view[0] != 1.0f || g_view[1] != 1.0f ||
-	                    g_view[2] != 0.0f || g_view[3] != 0.0f); /* view del gameplay (Scale 0.75) */
-	if (in_gameplay && gameplay_dump++ < 400)
-	{
-		const char* tgt = "WINDOW";
-		SDL_Texture* cur = SDL_GetRenderTarget(gd_renderer);
-		for (int i = 0; i < 4; ++i)
-		{
-			if (g_targets[i] && g_targets[i]->base.tex == cur)
-			{
-				tgt = (i == GFX_TOP) ? "TOP" : "BOTTOM";
-				break;
-			}
-		}
-		fprintf(stderr,
-		        "[DEBUG SPAWN] render: tgt=%s tex=%s subtex[%.0f..%.0f x %.0f..%.0f] dst=(%.1f,%.1f %.1fx%.1f) center=(%.1f,%.1f) view=(%.2f,%.2f,%.1f,%.1f) tint=0x%08x\n",
-		        tgt, tex->sdl ? "OK" : "NULL",
-		        subtex->left, subtex->right, subtex->top, subtex->bottom,
-		        dst.x, dst.y, dst.w, dst.h, center.x, center.y,
-		        g_view[0], g_view[1], g_view[2], g_view[3], tintColor);
-	}
 
 	SDL_SetTextureColorMod(tex->sdl,
 	                       (Uint8)((tintColor >>  0) & 0xff) * gd_fade_color_factor(gd_fade_r),

@@ -1149,8 +1149,6 @@ void create_objects() {
     vo->col_channel = 0;
     viewable_objects_ptr[sprite_count] = vo;
     sprite_count++;
-    /* [DEBUG SPAWN] log #5 */
-    fprintf(stderr, "[DEBUG SPAWN] create_objects: player viewable slot inserted, sprite_count=%d\n", sprite_count);
 
     int width = ceilf((SCREEN_WIDTH_AREA) / SECTION_SIZE);
     int height = ceilf((SCREEN_HEIGHT_AREA) / SECTION_SIZE);
@@ -1314,8 +1312,6 @@ void draw_post_player_effects() {
 }
 
 void draw_player_graphics() {
-    /* [DEBUG SPAWN] log #6 */
-    fprintf(stderr, "[DEBUG SPAWN] draw_player_graphics\n");
     change_blending(false);
     
     draw_collect_effect();
@@ -1552,8 +1548,6 @@ void spawn_icon_at(
     C2D_Sprite spr = { 0 };
 
     int count = icon.part_count - 1;
-    /* [DEBUG SPAWN] log #8b (part_count-1 alimenta el VLA) */
-    fprintf(stderr, "[DEBUG SPAWN] spawn_icon_at: count(VLA)=%d\n", count);
 
     C2D_ImageTint tints[count];
 
@@ -1581,12 +1575,7 @@ void spawn_icon_at(
         
         const IconPart *part = &parts[real_index];
         C2D_SpriteSheet *sheet = get_icon_sheet(part, gamemode);
-        if (!sheet) {
-            /* [DEBUG SPAWN] log E3 (fork de spawn_icon_at cayendo temprano) */
-            fprintf(stderr, "[DEBUG SPAWN] spawn_icon_at E3: get_icon_sheet NULL (gm=%d part=%zu) -> return\n",
-                    gamemode, real_index);
-            return;
-        }
+        if (!sheet) return;
 
         if (part->texture >= 0) {
 
@@ -1606,13 +1595,6 @@ void spawn_icon_at(
             C2D_SpriteSetPos(&spr, p_x, p_y);
             C2D_SpriteSetScale(&spr, sx, sy);
             C2D_SpriteSetRotation(&spr, rad);
-
-            /* [DEBUG SPAWN] log L1 (draw real del icono) */
-            fprintf(stderr, "[DEBUG SPAWN] icon draw: gm=%d part=%zu tex=%d pos=(%.1f,%.1f) scale=(%.2f,%.2f) rot=%.1f tint=0x%08x alpha=%d\n",
-                    gamemode, real_index, part->texture, p_x, p_y, sx, sy,
-                    (float)(rad * 180.0f / 3.14159265358979323846f),
-                    tints[real_index].corners[0].color,
-                    (tints[real_index].corners[0].color >> 24) & 0xff);
 
             C2D_DrawSpriteTinted(&spr, &tints[real_index]);
         }

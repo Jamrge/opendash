@@ -901,17 +901,6 @@ void game_loop() {
                     handle_respawn_effect();
                     handle_auto_checkpoints(STEPS_DT);
 
-                    /* [DEBUG SPAWN] log #4 (física 1 de cada 100 substeps) */
-                    static int spawn_log_counter = 0;
-                    if ((spawn_log_counter++ % 100) == 0) {
-                        fprintf(stderr, "[DEBUG SPAWN] physics tick #%d: dead=%d respawn={%d,%.3f,%d,%d} player(x=%.1f y=%.1f)\n",
-                                spawn_log_counter,
-                                (int)state.dead,
-                                state.respawn_effect_data.active, state.respawn_effect_data.timer,
-                                state.respawn_effect_data.state, state.respawn_effect_data.hide_player,
-                                state.player.x, state.player.y);
-                    }
-
                     u64 end_physics = svcGetSystemTick();
                     float physics_time = (end_physics - start_physics) / (CPU_TICKS_PER_MSEC);
 
