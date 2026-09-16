@@ -1,13 +1,16 @@
-# Opendash (early early alpha 0.0000001)
+# Opendash Early Prototype
 
+As for now, this project is just a gd3ds PC Port using a compatibility shim between sdl3 and citro.
+3DS stuff needs to be removed completely.
 
-gd3ds pc port using a compatibility shim between sdl3 and citro
+This will or will not be used as a base for Opendash.
 
-## BUGS THAT NEED TO BE FIXED
-- Trails don't work correctly
-- 240hz input doesn't work
-- No particles is a bit broken
-- everything
+## TODO
+- Add proper Windows / Linux compiling options
+- Implement keyboard support for typing
+- Implement better desktop keybinds (Quick restart, showing debug menu, esc to pause, etc)
+- Remove Dual Screen and make a singular UI
+- Make an actual CBF implementation
+- Audio not working, fixxxxx
+- FPS Settings
 
-
-this was made in a few hours thanks to gemini and @grok and claude and chatgpt and (needs to be rewritten)
