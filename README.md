@@ -8,7 +8,7 @@ This will or will not be used as a base for Opendash.
 ## TODO
 - Add proper Windows / Linux compiling options
 - Implement keyboard support for typing
-- Implement better desktop keybinds (Quick restart, showing debug menu, esc to pause, etc)
+- Implement better desktop keybinds (Quick restart, esc to pause, etc)
 - Remove Dual Screen and make a singular UI
 - Make an actual CBF implementation
 - FPS Settings
