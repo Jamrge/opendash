@@ -24,6 +24,7 @@
 #include <sys/stat.h>
 #include <time.h>
 #include <math.h>
+#include <SDL3/SDL.h>
 #include <SDL3_mixer/SDL_mixer.h>
 
 /* newlib/libctru define __RAND_MAX; macOS libc only has RAND_MAX.
@@ -196,6 +197,7 @@ typedef struct { s16 dx, dy; }    circlePosition;
 
 void hidScanInput(void);
 u32  hidKeysDown(void);
+bool is_debug_key_down(SDL_Scancode key);
 u32  hidKeysHeld(void);
 u32  hidKeysUp(void);
 void hidTouchRead(touchPosition* pos);

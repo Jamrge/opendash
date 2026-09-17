@@ -751,7 +751,25 @@ void game_loop() {
             } else if (settingsState.hitboxesEnabled && !settingsState.hitboxTrail) {
                 settingsState.hitboxTrail = true;
             } else settingsState.hitboxesEnabled = true;
-        }      
+        }
+
+        /* PC debug keybinds (separate from 3DS bitmask) */
+        if (is_debug_key_down(SDL_SCANCODE_N) && settingsState.enableDebugBindings) {
+            state.noclip ^= 1;
+        }
+        if (is_debug_key_down(SDL_SCANCODE_T) && settingsState.enableDebugBindings) {
+            state.profiling ^= 1;
+        }
+        if (is_debug_key_down(SDL_SCANCODE_H) && settingsState.enableDebugBindings) {
+            cheated = true;
+            cheats_used[CHEAT_HITBOX_DISPLAY] = true;
+            if (settingsState.hitboxesEnabled && settingsState.hitboxTrail) {
+                settingsState.hitboxesEnabled = false;
+                settingsState.hitboxTrail = false;
+            } else if (settingsState.hitboxesEnabled && !settingsState.hitboxTrail) {
+                settingsState.hitboxTrail = true;
+            } else settingsState.hitboxesEnabled = true;
+        }
 
         if (settingsState.hitboxesEnabled || state.hitbox_enabled_when_dead) {
             state.hitbox_display = 1;

@@ -210,6 +210,15 @@ static u32 g_keys_held = 0;
 static u32 g_keys_prev = 0;
 static u32 g_keys_down = 0;
 static u32 g_keys_up   = 0;
+
+/* Debug keys: separate edge-tracking, not part of the 3DS bitmask */
+#define DBG_KEY_COUNT 3
+static SDL_Scancode g_dbg_scancodes[DBG_KEY_COUNT] = {
+    SDL_SCANCODE_T, SDL_SCANCODE_N, SDL_SCANCODE_H
+};
+static bool g_dbg_held[DBG_KEY_COUNT] = {0};
+static bool g_dbg_prev[DBG_KEY_COUNT] = {0};
+static bool g_dbg_down[DBG_KEY_COUNT] = {0};
 static touchPosition g_touch  = { 0, 0 };
 static circlePosition g_circle = { 0, 0 };
 
@@ -335,6 +344,13 @@ void hidScanInput(void)
 		g_keys_prev = g_keys_held;
 		g_keys_held = scan_keys(keys);
 
+		/* edge-track debug keys (separate from 3DS bitmask) */
+		for (int i = 0; i < DBG_KEY_COUNT; i++) {
+			g_dbg_prev[i] = g_dbg_held[i];
+			g_dbg_held[i] = keys[g_dbg_scancodes[i]];
+			g_dbg_down[i] = g_dbg_held[i] && !g_dbg_prev[i];
+		}
+
 		/* end-of-scan checkpoint sample(s): full current state */
 		gd_ring_push_pad(g_keys_held, g_circle.dx, g_circle.dy);
 		float mx = 0, my = 0;
@@ -346,6 +362,11 @@ void hidScanInput(void)
 	{
 		g_keys_prev = g_keys_held;
 		g_keys_held = 0;
+		for (int i = 0; i < DBG_KEY_COUNT; i++) {
+			g_dbg_prev[i] = g_dbg_held[i];
+			g_dbg_held[i] = false;
+			g_dbg_down[i] = false;
+		}
 	}
 	g_keys_down = g_keys_held & ~g_keys_prev;
 	g_keys_up   = g_keys_prev & ~g_keys_held;
@@ -354,6 +375,15 @@ void hidScanInput(void)
 u32 hidKeysDown(void) { return g_keys_down; }
 u32 hidKeysHeld(void) { return g_keys_held; }
 u32 hidKeysUp(void)   { return g_keys_up; }
+
+bool is_debug_key_down(SDL_Scancode key)
+{
+	for (int i = 0; i < DBG_KEY_COUNT; i++) {
+		if (g_dbg_scancodes[i] == key)
+			return g_dbg_down[i];
+	}
+	return false;
+}
 
 void hidTouchRead(touchPosition* pos)  { if (pos) *pos = g_touch; }
 void hidCircleRead(circlePosition* pos){ if (pos) *pos = g_circle; }
