@@ -706,7 +706,7 @@ void game_loop() {
     exiting_level = false;
     fixed_dt = true;
 
-    sync_precise_input(false);
+    sync_precise_input(true);
     memset(pi_substep_presses, 0, sizeof(pi_substep_presses));
 
     u64 lastTime = svcGetSystemTick();
