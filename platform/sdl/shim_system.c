@@ -33,6 +33,8 @@ extern int mpg123_open(mpg123_handle* mh, const char* path);
 #include <string.h>
 #include <stdio.h>
 
+extern void init_sfx_pool(void);
+
 /* ------------------------------------------------------------------ */
 /* SDL bootstrap (gfx window)                                           */
 /* ------------------------------------------------------------------ */
@@ -729,6 +731,10 @@ Result ndspInit(void)
 
 	gd_dsp_pump_quit = false;
 	gd_dsp_pump = SDL_CreateThread(gd_dsp_pump_entry, "gd3ds-dsp", NULL);
+
+	ensure_mixer();
+	init_sfx_pool();
+
 	return 0;
 }
 
@@ -896,7 +902,7 @@ SwkbdButton swkbdInputText(SwkbdState* swkbd, char* buf, size_t bufSize)
 /* Path translation (romfs:/, /3ds/, sdmc:/)                            */
 /* ------------------------------------------------------------------ */
 
-static void gd_translate_path(const char* path, char* out, size_t outSize)
+void gd_translate_path(const char* path, char* out, size_t outSize)
 {
 	if ((strncmp(path, "romfs:/", 7)) == 0)
 	{

@@ -3,89 +3,42 @@
 #include <string.h>
 #include "wav_player.h"
 #include "main.h"
-static ndspWaveBuf waveBufs[24];
 
-bool load_wav(const char* path, SFX* sfx) {
-    FILE* f = fopen(path, "rb");
-    if (!f) return false;
+SFXPool sfx_pool = {0};
 
-    char chunkId[4];
-    u32 chunkSize;
-    char format[4];
+void init_sfx_pool(void) {
+    if (!gd_mixer) return;
 
-    fread(chunkId, 1, 4, f); // "RIFF"
-    fread(&chunkSize, 4, 1, f);
-    fread(format, 1, 4, f);  // "WAVE"
-
-    if (strncmp(chunkId, "RIFF", 4) || strncmp(format, "WAVE", 4)) {
-        // Not a real wav file
-        fclose(f);
-        return false;
-    }
-
-    // Read chunks
-    while (!feof(f)) {
-        fread(chunkId, 1, 4, f);
-        fread(&chunkSize, 4, 1, f);
-
-        if (!strncmp(chunkId, "fmt ", 4)) {
-            u16 audioFormat, numChannels, bitsPerSample;
-            u32 sampleRate;
-
-            fread(&audioFormat,   2, 1, f);
-            fread(&numChannels,   2, 1, f);
-            fread(&sampleRate,    4, 1, f);
-
-            fseek(f, 6, SEEK_CUR); // Skip byteRate + blockAlign
-
-            fread(&bitsPerSample, 2, 1, f);
-
-            if (audioFormat != 1 || bitsPerSample != 16) {
-                fclose(f);
-                return false;
-            }
-
-            sfx->channels = numChannels;
-            sfx->sampleRate = sampleRate;
-
-            // Skip rest if needed
-            if (chunkSize > 16)
-                fseek(f, chunkSize - 16, SEEK_CUR);
-
-        } else if (!strncmp(chunkId, "data", 4)) {
-            sfx->data = (int16_t*)linearAlloc(chunkSize);
-            fread(sfx->data, 1, chunkSize, f);
-
-            sfx->sampleCount = chunkSize / sizeof(int16_t);
-            fclose(f);
-            return true;
-        } else {
-            fseek(f, chunkSize, SEEK_CUR);
+    for (int i = 0; i < SFX_POOL_SIZE; i++) {
+        sfx_pool.tracks[i] = MIX_CreateTrack(gd_mixer);
+        if (sfx_pool.tracks[i]) {
+            MIX_TagTrack(sfx_pool.tracks[i], "sfx");
         }
     }
+    sfx_pool.next = 0;
+}
 
-    fclose(f);
-    return false;
+bool load_wav(const char* path, SFX* sfx) {
+    if (!gd_mixer) return false;
+
+    char translated[1024];
+    gd_translate_path(path, translated, sizeof(translated));
+
+    sfx->audio = MIX_LoadAudio(gd_mixer, translated, true);
+    return sfx->audio != NULL;
 }
 
 void play_sfx(SFX* sfx, int channel) {
-    ndspChnReset(channel);
+    (void)channel;
+    if (!sfx->audio || !gd_mixer) return;
 
-    ndspChnSetInterp(channel, NDSP_INTERP_POLYPHASE);
-    ndspChnSetRate(channel, sfx->sampleRate);
-    ndspChnSetFormat(channel,
-        sfx->channels == 2 ? NDSP_FORMAT_STEREO_PCM16
-                           : NDSP_FORMAT_MONO_PCM16);
+    MIX_Track* track = sfx_pool.tracks[sfx_pool.next];
 
-    memset(&waveBufs[channel], 0, sizeof(ndspWaveBuf));
+    if (track) {
+        MIX_StopTrack(track, 0);
+        MIX_SetTrackAudio(track, sfx->audio);
+        MIX_PlayTrack(track, 0);
+    }
 
-    waveBufs[channel].data_vaddr = sfx->data;
-    waveBufs[channel].nsamples   = sfx->sampleCount / sfx->channels;
-
-    DSP_FlushDataCache(sfx->data,
-        sfx->sampleCount * sizeof(int16_t));
-
-    ndspChnWaveBufAdd(channel, &waveBufs[channel]);
-    
-    apply_volume_settings();
+    sfx_pool.next = (sfx_pool.next + 1) % SFX_POOL_SIZE;
 }

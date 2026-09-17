@@ -10,8 +10,7 @@
 
 #define POWER_THRESH_MULTIPLIER 0.75f
 
-extern volatile float amplitude;
-
+float get_amplitude(void);
 void audio_init();
 int play_mp3(char *path, bool loop, float seek);
 int play_mp3_buf(void *buf, size_t sz, bool loop, float seek);

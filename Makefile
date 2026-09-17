@@ -3,7 +3,7 @@
 # The original devkitarm/3DS build lives in Makefile.3ds (untouched).
 #
 # Requirements:
-#   macOS:  brew install sdl3 mpg123 json-c   (curl/zlib from the macOS SDK)
+#   macOS:  brew install sdl3 sdl3_mixer mpg123 json-c   (curl/zlib from the macOS SDK)
 #   MSYS2:  pacman -S mingw-w64-x86_64-toolchain \
 #          mingw-w64-x86_64-sdl3 \
 #          mingw-w64-x86_64-mpg123 \
@@ -49,7 +49,7 @@ ifeq ($(HOST),windows)
 	-Ilibraries \
 	-I$(BUILDPREFIX)/include \
 	-MMD -MP
-  LIBS := -L$(BUILDPREFIX)/lib -lSDL3 -lmpg123 -ljson-c -lcurl -lz -lm
+  LIBS := -L$(BUILDPREFIX)/lib -lSDL3 -lSDL3_mixer -lmpg123 -ljson-c -lcurl -lz -lm
 else
   # macOS default: Homebrew (zlib/curl come from the macOS SDK, no .pc)
   BREW := $(shell brew --prefix 2>/dev/null)
@@ -58,7 +58,7 @@ else
   endif
   CC ?= clang
   EXEEXT :=
-  CFLAGS := -std=gnu11 -O2 -g -Wall \
+	CFLAGS := -std=gnu11 -O2 -g -Wall \
 	-Iplatform/sdl \
 	-Isource \
 	-Isource/utils \
@@ -70,7 +70,7 @@ else
   LIBS := -L$(BREW)/lib \
 	-L$(BREW)/opt/mpg123/lib \
 	-L$(BREW)/opt/json-c/lib \
-	-lSDL3 -lmpg123 -ljson-c -lcurl -lz -lm
+	-lSDL3 -lSDL3_mixer -lmpg123 -ljson-c -lcurl -lz -lm
 endif
 
 BUILD := build

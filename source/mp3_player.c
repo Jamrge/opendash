@@ -1,8 +1,8 @@
 #include <3ds.h>
+#include <stdatomic.h>
 #include "mp3_player.h"
 #include "level_loading.h"
 #include "math_helpers.h"
-#include <mpg123.h>
 #include <stdio.h>
 #include <string.h>
 #include "main.h"
@@ -10,187 +10,84 @@
 #include "menus/settings.h"
 #include "state.h"
 
-#define THREAD_AFFINITY (is_N3DS ? 2 : 0)
-#define THREAD_STACK_SZ 32 * 1024    // 32kB stack for audio thread
-
 #define MUSIC_CHANNEL 0
-#define MP3_BUF_SIZE 4096
-#define NUM_BUFS 4
 
-static u8 *audioBuffer;
-static LightEvent soundEvent;
-static LightEvent seekEvent;
-static LightLock decoderLock;
-
-static mpg123_handle* mh;
-static size_t buffSize;
-static long rate;
-static int audio_channels;
+MIX_Mixer* gd_mixer = NULL;
+MIX_Track* gd_music_track = NULL;
+static MIX_Audio* current_music = NULL;
 
 static volatile bool quit = false;
 static volatile bool looping = false;
-static volatile bool skip = false;
 static volatile bool paused = false;
-static volatile bool restart_requested = false;
 
-volatile float amplitude = 0;
+static _Atomic float amplitude_atomic = 0.0f;
 
-static void *song_buf = NULL;
-static size_t song_sz = 0;
-static size_t song_pos = 0;
+static float current_music_rate = 0;
+static int   current_music_channels = 0;
 
-static volatile float seek_target = 0;
+static float calculate_amplitude(float power);
+static float calculate_power(int16_t *samples, size_t frames, int channels);
 
-static Thread threadId = NULL;
+static void gd_amplitude_callback(void* userdata, MIX_Track* track,
+                                   const SDL_AudioSpec* spec, float* pcm, int samples)
+{
+    (void)userdata; (void)track;
 
-static ndspWaveBuf waveBuf[NUM_BUFS];
+    int ch = spec->channels;
+    if (ch <= 0) ch = 2;
+    int frames = samples / ch;
+    if (frames <= 0) return;
 
-static inline u32 samplerate_mp3(void) {
-    return rate;
-}
+    int16_t buf[2048];
+    int copy = frames * ch;
+    if (copy > 2048) copy = 2048;
 
-static inline u32 buffsize_mp3(void) {
-    return buffSize;
-}
-
-static inline u32 channels_mp3(void) {
-    return audio_channels;
-}
-
-static void audioCallback(void *const nul_) {
-    (void)nul_;  // Unused
-
-    if(quit || skip) { // Quit flag
-        return;
-    }
-    
-    LightEvent_Signal(&soundEvent);
-}
-
-
-void audio_init() {
-    LightEvent_Init(&soundEvent, RESET_ONESHOT);
-
-    audioBuffer = (u8*)linearAlloc(NUM_BUFS * buffsize_mp3());
-    if (!audioBuffer) {
-        output_log("Failed to allocate audio buffer\n");
-        return;
-    }
-    
-    ndspChnReset(MUSIC_CHANNEL);
-    ndspSetOutputMode(NDSP_OUTPUT_STEREO);
-    ndspChnSetInterp(MUSIC_CHANNEL, NDSP_INTERP_POLYPHASE);
-    ndspChnSetRate(MUSIC_CHANNEL, samplerate_mp3());
-    ndspChnSetFormat(MUSIC_CHANNEL, channels_mp3() == 2 ? NDSP_FORMAT_STEREO_PCM16 : NDSP_FORMAT_MONO_PCM16);
-    ndspSetCallback(audioCallback, NULL);
-
-    if (paused) ndspChnSetPaused(MUSIC_CHANNEL, paused);
-
-    for (int i = 0; i < NUM_BUFS; i++) {
-        memset(&waveBuf[i], 0, sizeof(ndspWaveBuf));
-        waveBuf[i].data_vaddr = audioBuffer + i * buffsize_mp3();
+    for (int i = 0; i < copy; i++) {
+        float v = pcm[i] * 32767.f;
+        if (v > 32767.f) v = 32767.f;
+        if (v < -32768.f) v = -32768.f;
+        buf[i] = (int16_t)v;
     }
 
-    apply_volume_settings();
+    float rms = calculate_power(buf, frames, ch);
+    atomic_store_explicit(&amplitude_atomic, calculate_amplitude(rms), memory_order_relaxed);
 }
 
-void audio_exit() {
-    ndspChnReset(MUSIC_CHANNEL);
-    linearFree(audioBuffer);
-    audioBuffer = NULL;
-    mpg123_close(mh);
-    mpg123_delete(mh);
-    mpg123_exit();
+static void gd_track_stopped(void* userdata, MIX_Track* track)
+{
+    (void)userdata; (void)track;
+    /* Music ended naturally — let the game detect via amplitude decay */
 }
 
-static ssize_t read_mem(void *handle, void *buf, size_t count) {
-    (void)handle;
+void ensure_mixer(void)
+{
+    if (gd_mixer) return;
 
-    if (!song_buf || song_pos >= song_sz) return 0;
+    if (!SDL_InitSubSystem(SDL_INIT_AUDIO)) return;
 
-    size_t available = song_sz - song_pos;
-    size_t to_read = count < available ? count : available;
+    MIX_Init();
 
-    if (to_read > 0) {
-        memcpy(buf, (u8*)song_buf + song_pos, to_read);
-        song_pos += to_read;
+    gd_mixer = MIX_CreateMixerDevice(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, NULL);
+    if (!gd_mixer) return;
+
+    gd_music_track = MIX_CreateTrack(gd_mixer);
+    if (gd_music_track) {
+        MIX_SetTrackStoppedCallback(gd_music_track, gd_track_stopped, NULL);
+        MIX_SetTrackRawCallback(gd_music_track, gd_amplitude_callback, NULL);
     }
-
-    return (ssize_t)to_read;
 }
 
-static off_t seek_mem(void *handle, off_t offset, int whence) {
-    (void)handle;
-
-    off_t new_pos;
-
-    switch (whence) {
-        case SEEK_SET:
-            new_pos = offset;
-            break;
-        case SEEK_CUR:
-            new_pos = (off_t)song_pos + offset;
-            break;
-        case SEEK_END:
-            new_pos = (off_t)song_sz + offset;
-            break;
-        default:
-            return -1;
-    }
-
-    if (new_pos < 0) new_pos = 0;
-    if ((size_t)new_pos > song_sz) new_pos = (off_t)song_sz;
-
-    song_pos = (size_t)new_pos;
-    return (off_t)song_pos;
+void audio_init(void) {
+    ensure_mixer();
 }
 
-bool mp3_init(void *file) {
-    int err = 0;
-    int encoding = 0;
-
-    if ((mh = mpg123_new(NULL, &err)) == NULL) {
-        output_log("Couldn't new it\n");
-        return 0;
-    }
-
-    mpg123_format_none(mh);
-
-    mpg123_format(mh, 44100, MPG123_STEREO, MPG123_ENC_SIGNED_16);
-    mpg123_format(mh, 44100, MPG123_MONO,   MPG123_ENC_SIGNED_16);
-
-    mpg123_format(mh, 48000, MPG123_STEREO, MPG123_ENC_SIGNED_16);
-    mpg123_format(mh, 48000, MPG123_MONO,   MPG123_ENC_SIGNED_16);
-
-    if (song_buf) {
-        song_pos = 0;
-        mpg123_replace_reader_handle(mh, read_mem, seek_mem, NULL);
-
-        if (mpg123_open_handle(mh, NULL) != MPG123_OK) {
-            output_log("Couldn't open memory stream\n");
-            return 0;
-        }
-    } else {
-        if (mpg123_open(mh, file) != MPG123_OK) {
-            output_log("Couldn't open file\n");
-            return 0;
-        }
-    }
-
-    if (mpg123_getformat(mh, &rate, &audio_channels, &encoding) != MPG123_OK) {
-        output_log("Couldn't get format\n");
-        return 0;
-    }
-
-    buffSize = MP3_BUF_SIZE * audio_channels;
-
-    return 1;
+void audio_exit(void) {
+    /* SDL3_mixer manages its own resources; we just clear our references */
 }
 
 u32 decode_mp3(void* buffer) {
-    size_t done = 0;
-    mpg123_read(mh, (unsigned char *)(buffer), buffSize, &done);
-    return done / (sizeof(int16_t));
+    (void)buffer;
+    return 0;
 }
 
 float calculate_amplitude(float power) {
@@ -205,16 +102,13 @@ float calculate_amplitude(float power) {
     float delta = power - prev;
     float abs_delta = fabsf(delta);
 
-    // Low-pass filter the delta
     avg_delta = avg_delta + ((abs_delta - avg_delta) * 0.1f);
 
-    // Detect note change, large RMS increase indicates a new note
     float rms_delta = power - prev_power;
     float abs_rms_delta = fabsf(rms_delta);
     float rms_thresh = avg_delta * POWER_THRESH_MULTIPLIER;
 
     if (abs_rms_delta > rms_thresh && rms_delta > 0.f) {
-        // Note changed, do pulse
         pulse = AMP_MAX;
     }
 
@@ -253,234 +147,164 @@ float calculate_power(int16_t *samples, size_t frames, int channels) {
     return ((float)sum_squares / count) / (32768.f * 32768.f);
 }
 
-static float get_song_length() {
-    if (samplerate_mp3() <= 0.f) return 0.f; // Shouldn't happen but just in case
-
-    return (float) mpg123_length(mh) / samplerate_mp3();
-}
-
-void audio_thread(void *const file) {
-    skip = false;
-    bool lastbuf = false;
-
-    if(!mp3_init(file)) return;
-
-    audio_init();
-
-    // If song offset greater than the length, start at 0
-    if (level_info.song_offset >= get_song_length()) {
-        level_info.song_offset = 0;
-    }
-    
-    // Do the same with seek target
-    if (seek_target >= get_song_length()) {
-        seek_target = 0;
-        LightEvent_Signal(&seekEvent);
-    }
-
-    // Do initial seek
-    if (seek_target > 0) {   
-        seek_mp3(seek_target);    
-        seek_target = -1;
-    }
-
-    while (!quit && !skip) {
-        for (int i = 0; i < NUM_BUFS; i++) {
-            ndspWaveBuf *buf = &waveBuf[i];
-
-            if (buf->status == NDSP_WBUF_DONE || buf->status == NDSP_WBUF_FREE) {
-                LightLock_Lock(&decoderLock);
-                size_t read = decode_mp3((void *)buf->data_pcm16);
-                LightLock_Unlock(&decoderLock);
-
-                if (read > 0) {
-                    size_t frames = read / channels_mp3();
-
-                    float rms = calculate_power((int16_t*)buf->data_pcm16,
-                                            frames,
-                                            channels_mp3());
-
-                    amplitude = calculate_amplitude(rms);
-                }
-
-                // Check for the end of song
-                if (read == 0) {
-                    if (looping) {
-                        seek_mp3(0);
-                    } else {
-                        lastbuf = true;
-                        continue;
-                    }
-                }
-
-                buf->nsamples = read / channels_mp3();
-
-                ndspChnWaveBufAdd(MUSIC_CHANNEL, buf);
-            }
-        }
-
-        // Handle song end
-        if (lastbuf) {
-            // Wait for either song restart or level quit, while waiting, make pulses scale to 0
-            while (!restart_requested && !quit) {
-                amplitude = calculate_amplitude(0);
-                svcSleepThread((long) 1.666666666666e+7);
-            }
-
-            if (quit) break;
-
-            restart_requested = false;
-            lastbuf = false;
-            continue;
-        }
-
-        if (ndspChnIsPaused(MUSIC_CHANNEL)) {
-            LightEvent_Wait(&soundEvent);
-            continue;
-        }
-
-        LightEvent_Wait(&soundEvent);
-    }
-}
-
-// Play an mp3 file defined by a path
 int play_mp3(char *path, bool loop, float seek) {
-    // Not found
-    if (access(path, F_OK) != 0) {
-        return 0;
-    }
+    if (access(path, F_OK) != 0) return 0;
 
-    LightEvent_Init(&seekEvent, RESET_ONESHOT);
-    quit = false;
-    paused = false;
-    looping = loop;
-
-    seek_target = seek;
-
-    int32_t priority = 0x30;
-    svcGetThreadPriority(&priority, CUR_THREAD_HANDLE);
-    priority -= 10;
-    priority = priority < 0x18 ? 0x18 : priority;
-    priority = priority > 0x3F ? 0x3F : priority;
-
-    threadId = threadCreate(audio_thread, path,
-                                          THREAD_STACK_SZ, priority,
-                                          THREAD_AFFINITY, true);
-
-    // Wait for seek to finish
-    if (seek > 0) LightEvent_Wait(&seekEvent);
-    return 1;
-}
-
-void seek(u32 location) {
-    mpg123_seek(mh, location, SEEK_SET);
-}
-
-// Set position in seconds
-void seek_mp3(float time) {
-    if (time < 0) time = 0;
-
-    int location = time * samplerate_mp3();
-    if (!quit) {
-        bool oldstate = ndspChnIsPaused(MUSIC_CHANNEL);
-        ndspChnSetPaused(MUSIC_CHANNEL, true); //Pause playback...
-        
-        LightLock_Lock(&decoderLock);
-        // Flush old audio
-        ndspChnReset(MUSIC_CHANNEL);
-        ndspSetOutputMode(NDSP_OUTPUT_STEREO);
-        ndspChnSetInterp(MUSIC_CHANNEL, NDSP_INTERP_POLYPHASE);
-        ndspChnSetRate(MUSIC_CHANNEL, samplerate_mp3());
-        ndspChnSetFormat(MUSIC_CHANNEL, channels_mp3() == 2 ? NDSP_FORMAT_STEREO_PCM16 : NDSP_FORMAT_MONO_PCM16);
-        ndspSetCallback(audioCallback, NULL);
-
-        seek(location);
-
-        for (int i = 0; i < NUM_BUFS; i++) {
-            memset(&waveBuf[i], 0, sizeof(ndspWaveBuf));
-            waveBuf[i].data_vaddr = audioBuffer + i * buffsize_mp3();
-        }
-        LightLock_Unlock(&decoderLock);
-        ndspChnSetPaused(MUSIC_CHANNEL, oldstate); //once the seeking is done, playback can continue.
-
-        apply_volume_settings();
-        
-        restart_requested = true;
-        LightEvent_Signal(&seekEvent);
-    }
-}
-
-// Pause or unpause playback
-void toggle_playback_mp3() {
-    paused = !ndspChnIsPaused(MUSIC_CHANNEL);
-    ndspChnSetPaused(MUSIC_CHANNEL, paused);
-}
-
-void pause_playback_mp3() {
-    paused = true;
-    ndspChnSetPaused(MUSIC_CHANNEL, paused);
-}
-
-void unpause_playback_mp3() {
-    paused = false;
-    ndspChnSetPaused(MUSIC_CHANNEL, paused);
-}
-
-void fade_to_amplitude(float new_amplitude) {
-    amplitude = calculate_amplitude(new_amplitude);
-}
-
-// Play an mp3 from a pre-loaded memory buffer
-int play_mp3_buf(void *buf, size_t sz, bool loop, float seek) {
-    if (!buf || sz == 0) return 0;
+    ensure_mixer();
+    if (!gd_mixer) return 0;
 
     stop_mp3();
 
-    LightEvent_Init(&seekEvent, RESET_ONESHOT);
-    quit = false;
-    looping = loop;
-    seek_target = seek;
+    char translated[1024];
+    gd_translate_path(path, translated, sizeof(translated));
 
-    song_buf = buf;
-    song_sz = sz;
-    song_pos = 0;
+    current_music = MIX_LoadAudio(gd_mixer, translated, false);
+    if (!current_music) return 0;
 
-    int32_t priority = 0x30;
-    svcGetThreadPriority(&priority, CUR_THREAD_HANDLE);
-    priority -= 10;
-    priority = priority < 0x18 ? 0x18 : priority;
-    priority = priority > 0x3F ? 0x3F : priority;
-
-    threadId = threadCreate(audio_thread, NULL, THREAD_STACK_SZ, priority, THREAD_AFFINITY, true);
-    if (!threadId) {
-        free(song_buf);
-        song_buf = NULL;
-        song_sz = 0;
-        song_pos = 0;
-        return 0;
+    SDL_AudioSpec fmt;
+    if (MIX_GetAudioFormat(current_music, &fmt)) {
+        current_music_rate = (float)fmt.freq;
+        current_music_channels = fmt.channels;
+    } else {
+        current_music_rate = 44100;
+        current_music_channels = 2;
     }
 
-    if (seek > 0) LightEvent_Wait(&seekEvent);
+    quit = false;
+    looping = loop;
+    paused = false;
+
+    if (!gd_music_track) {
+        gd_music_track = MIX_CreateTrack(gd_mixer);
+        if (gd_music_track)
+            MIX_SetTrackStoppedCallback(gd_music_track, gd_track_stopped, NULL);
+    }
+
+    MIX_SetTrackAudio(gd_music_track, current_music);
+
+    SDL_PropertiesID props = SDL_CreateProperties();
+    SDL_SetNumberProperty(props, MIX_PROP_PLAY_LOOPS_NUMBER, loop ? -1 : 0);
+
+    if (seek > 0 && current_music_rate > 0) {
+        Sint64 start_frame = (Sint64)(seek * current_music_rate);
+        SDL_SetNumberProperty(props, MIX_PROP_PLAY_START_FRAME_NUMBER, start_frame);
+    }
+
+    MIX_PlayTrack(gd_music_track, props);
+    SDL_DestroyProperties(props);
+
+    if (loop && seek > 0) {
+        MIX_SetTrackLoops(gd_music_track, -1);
+    }
+
     return 1;
 }
 
-// Stop playback
-void stop_mp3() {
-    if (!quit && threadId) {
-        quit = true;
-        
-        LightEvent_Signal(&soundEvent);
-        
-        threadJoin(threadId, U64_MAX);
-        
-        threadId = NULL;
-        audio_exit();
+void seek_mp3(float time) {
+    if (time < 0) time = 0;
+    if (!gd_music_track || !current_music) return;
+
+    if (current_music_rate <= 0.f) return;
+
+    Sint64 frame = (Sint64)(time * current_music_rate);
+    MIX_SetTrackPlaybackPosition(gd_music_track, frame);
+}
+
+void toggle_playback_mp3(void) {
+    if (!gd_music_track) return;
+    if (MIX_TrackPaused(gd_music_track)) {
+        MIX_ResumeTrack(gd_music_track);
+        paused = false;
+    } else {
+        MIX_PauseTrack(gd_music_track);
+        paused = true;
+    }
+}
+
+void pause_playback_mp3(void) {
+    if (!gd_music_track) return;
+    MIX_PauseTrack(gd_music_track);
+    paused = true;
+}
+
+void unpause_playback_mp3(void) {
+    if (!gd_music_track) return;
+    MIX_ResumeTrack(gd_music_track);
+    paused = false;
+}
+
+void fade_to_amplitude(float new_amplitude) {
+    atomic_store_explicit(&amplitude_atomic, calculate_amplitude(new_amplitude), memory_order_relaxed);
+}
+
+float get_amplitude(void) {
+    return atomic_load_explicit(&amplitude_atomic, memory_order_relaxed);
+}
+
+int play_mp3_buf(void *buf, size_t sz, bool loop, float seek) {
+    if (!buf || sz == 0) return 0;
+
+    ensure_mixer();
+    if (!gd_mixer) return 0;
+
+    stop_mp3();
+
+    /* Load directly from memory — predecode=true decodes everything before returning */
+    SDL_IOStream *io = SDL_IOFromConstMem(buf, sz);
+    if (!io) {
+        free(buf);
+        return 0;
+    }
+    current_music = MIX_LoadAudio_IO(gd_mixer, io, true, true);
+    free(buf);
+
+    if (!current_music) return 0;
+
+    SDL_AudioSpec fmt;
+    if (MIX_GetAudioFormat(current_music, &fmt)) {
+        current_music_rate = (float)fmt.freq;
+        current_music_channels = fmt.channels;
+    } else {
+        current_music_rate = 44100;
+        current_music_channels = 2;
     }
 
-    if (song_buf) {
-        free(song_buf);
-        song_buf = NULL;
+    quit = false;
+    looping = loop;
+    paused = false;
+
+    if (!gd_music_track) {
+        gd_music_track = MIX_CreateTrack(gd_mixer);
+        if (gd_music_track)
+            MIX_SetTrackStoppedCallback(gd_music_track, gd_track_stopped, NULL);
     }
-    song_sz = 0;
-    song_pos = 0;
+
+    MIX_SetTrackAudio(gd_music_track, current_music);
+
+    SDL_PropertiesID props = SDL_CreateProperties();
+    SDL_SetNumberProperty(props, MIX_PROP_PLAY_LOOPS_NUMBER, loop ? -1 : 0);
+
+    if (seek > 0 && current_music_rate > 0) {
+        Sint64 start_frame = (Sint64)(seek * current_music_rate);
+        SDL_SetNumberProperty(props, MIX_PROP_PLAY_START_FRAME_NUMBER, start_frame);
+    }
+
+    MIX_PlayTrack(gd_music_track, props);
+    SDL_DestroyProperties(props);
+
+    return 1;
+}
+
+void stop_mp3(void) {
+    if (gd_music_track) {
+        MIX_StopTrack(gd_music_track, 0);
+    }
+
+    if (current_music) {
+        MIX_DestroyAudio(current_music);
+        current_music = NULL;
+    }
+
+    quit = true;
+    atomic_store_explicit(&amplitude_atomic, 0.0f, memory_order_relaxed);
 }

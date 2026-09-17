@@ -24,6 +24,7 @@
 #include <sys/stat.h>
 #include <time.h>
 #include <math.h>
+#include <SDL3_mixer/SDL_mixer.h>
 
 /* newlib/libctru define __RAND_MAX; macOS libc only has RAND_MAX.
  * math_helpers.c uses __RAND_MAX, so map it for desktop builds. */
@@ -227,8 +228,12 @@ void LightEvent_Wait(LightEvent* ev);
 void LightEvent_Clear(LightEvent* ev);
 
 /* ------------------------------------------------------------------ */
-/* ndsp (audio): stubbed in phase 1; real SDL audio backend later       */
+/* ndsp (audio): now backed by SDL3_mixer                              */
 /* ------------------------------------------------------------------ */
+
+extern MIX_Mixer* gd_mixer;
+extern MIX_Track* gd_music_track;
+void ensure_mixer(void);
 
 enum
 {
@@ -331,6 +336,7 @@ SwkbdButton swkbdInputText(SwkbdState* swkbd, char* buf, size_t bufSize);
 FILE* gd3ds_fopen(const char* path, const char* mode);
 int   gd3ds_mkdir(const char* path, mode_t mode);
 int   gd3ds_access(const char* path, int mode);
+void  gd_translate_path(const char* path, char* out, size_t outSize);
 struct mpg123_handle_struct;   /* completed later by <mpg123.h> */
 int   gd3ds_mpg_open(struct mpg123_handle_struct* mh, const char* path);
 

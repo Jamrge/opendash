@@ -231,22 +231,19 @@ float slider_to_volume(float v) {
 }
 
 void set_channel_volume(int channel, float volume) {
-    float mix[12] = {0};
-
     float gain = slider_to_volume(volume);
 
-    mix[0] = gain;
-    mix[1] = gain;
-
-    ndspChnSetMix(channel, mix);
+    if (channel == 0 && gd_music_track) {
+        MIX_SetTrackGain(gd_music_track, gain);
+    }
+    if (channel == 1 && gd_mixer) {
+        MIX_SetTagGain(gd_mixer, "sfx", gain);
+    }
 }
 
 void apply_volume_settings() {
     set_channel_volume(0, music_volume);
-
-    for (int i = 1; i <= 7; i++) {
-        set_channel_volume(i, sound_volume);
-    }
+    set_channel_volume(1, sound_volume);
 }
 
 void check_system_model() {
@@ -1467,6 +1464,8 @@ int main(int argc, char* argv[]) {
     loading_screen_update(75);
 
     load_sfx();
+
+    apply_volume_settings();
 
     memset(&level_info, 0, sizeof(LoadedLevelInfo));
     

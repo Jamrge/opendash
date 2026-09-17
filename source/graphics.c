@@ -572,7 +572,7 @@ void spawn_object_at(
             C2D_SpriteSetCenter(&vo->spr, 0.5f, 0.5f);
         }
 
-        float pulse_scale = get_object_pulse(amplitude, id, 0);
+        float pulse_scale = get_object_pulse(get_amplitude(), id, 0);
 
         C2D_SpriteSetPos(&vo->spr, p_x, p_y);
         C2D_SpriteSetScale(&vo->spr, sx * pulse_scale, sy * pulse_scale);
@@ -595,7 +595,7 @@ void spawn_object_at(
 
         vo->spr = sprite_templates[id].glow_template;
 
-        float pulse_scale = get_object_pulse(amplitude, id, 1);
+        float pulse_scale = get_object_pulse(get_amplitude(), id, 1);
 
         C2D_SpriteSetPos(&vo->spr, x, y);
         C2D_SpriteSetScale(&vo->spr, sx * pulse_scale, sy * pulse_scale);
@@ -634,7 +634,7 @@ void spawn_object_at(
 
             vo->spr = sprite_templates[id].child_templates[i]; 
 
-            float pulse_scale = get_object_pulse(amplitude, id, i + 2);
+            float pulse_scale = get_object_pulse(get_amplitude(), id, i + 2);
 
             C2D_SpriteSetPos(&vo->spr, c_x, c_y);
             if (id < 15 || id > 17) {
