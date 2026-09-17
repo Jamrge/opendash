@@ -159,6 +159,7 @@ typedef struct {
     char text[128];
     int character_limit;
     int border;
+    bool editing;
 } UITextbox;
 
 typedef struct {

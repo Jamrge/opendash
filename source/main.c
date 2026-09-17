@@ -246,6 +246,13 @@ void apply_volume_settings() {
     set_channel_volume(1, sound_volume);
 }
 
+static void draw_fps_overlay(void) {
+    if (!settingsState.showFps) return;
+    float fps = 1.0f / delta;
+    if (fps > 60.0f) fps = 60.0f;
+    draw_text(&bigFont_fontCharset, &bigFont_sheet, 0, 6, 0.4f, 0.4f, 0, true, "FPS: %6.1f", fps);
+}
+
 void check_system_model() {
     u8 model = get_model();
     is_N3DS = model == CFG_MODEL_N2DSXL || model == CFG_MODEL_N3DS || model == CFG_MODEL_N3DSXL || is_citra();
@@ -1239,15 +1246,12 @@ void game_loop() {
             if (state.profiling) {
                 float processingTime = ((ticks / CPU_TICKS_PER_MSEC)) * 6;
                 float drawingTime = C3D_GetDrawingTime() * 6;
-                float fps = 1 / delta;
-                if (fps > 60) fps = 60;
 
                 #define DEBUG_TEXT_SCALE 0.4f, 0.4f
                 
                 draw_text(&bigFont_fontCharset, &bigFont_sheet, 0, 6,  DEBUG_TEXT_SCALE, 0, true, "CPU: %6.2f%% (%6.2f%% %6.2f%%)", (C3D_GetProcessingTime() * 6) + processingTime, C3D_GetProcessingTime() * 6, processingTime);
                 draw_text(&bigFont_fontCharset, &bigFont_sheet, 0, 18, DEBUG_TEXT_SCALE, 0, true, "GPU: %6.2f%%", drawingTime);
-                draw_text(&bigFont_fontCharset, &bigFont_sheet, 0, 30, DEBUG_TEXT_SCALE, 0, true, "FPS: %6.1f", fps);
-                draw_text(&bigFont_fontCharset, &bigFont_sheet, 0, 42, DEBUG_TEXT_SCALE, 0, true, "Linear free: %d", linearSpaceFree());
+                draw_text(&bigFont_fontCharset, &bigFont_sheet, 0, 30, DEBUG_TEXT_SCALE, 0, true, "Linear free: %d", linearSpaceFree());
                 draw_text(&bigFont_fontCharset, &bigFont_sheet, 180, 42, DEBUG_TEXT_SCALE, 0, true, "CMDBuf: %6.2f%%", C3D_GetCmdBufUsage()*100.0f);
 
                 draw_text(&bigFont_fontCharset, &bigFont_sheet, 180, 66,  DEBUG_TEXT_SCALE, 0, true, "%d steps", steps);
@@ -1463,6 +1467,7 @@ int main(int argc, char* argv[]) {
     loading_screen_update(0);
 
     ui_assets_init();
+    shim_set_top_screen_done_hook(draw_fps_overlay);
     game_assets_init();
     loading_screen_update(10);
 

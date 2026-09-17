@@ -11,9 +11,28 @@
 #include "ui_textbox.h"
 
 #include "utils/keyboard.h"
+#include "utils/precise_input.h"
+#include "main.h"
 
 static void ui_textbox_update(UIElement* e, UIInput* touch, UITransform *transform) {
     UITextbox *textbox = (UITextbox *) e;
+
+    /* If editing, copy live buffer to textbox->text for rendering */
+    if (textbox->editing && gd_is_text_input_active()) {
+        const char *cur = gd_text_input_get_current();
+        if (cur) strncpy(textbox->text, cur, textbox->character_limit);
+        return;
+    }
+
+    /* Editing just finished — confirm saves text, exit discards */
+    if (textbox->editing && !gd_is_text_input_active()) {
+        textbox->editing = false;
+        if (pi_enabled) sync_precise_input(true);
+        if(e->action){
+            e->action(e);
+        }
+        return;
+    }
 
     bool inside = ui_element_basic_bound_check(e, touch, transform);
     
@@ -23,10 +42,8 @@ static void ui_textbox_update(UIElement* e, UIInput* touch, UITransform *transfo
         touch->interacted = true;
 
         if (hidKeysDown() & KEY_TOUCH) {
-            read_text(textbox->text, textbox->title, textbox->character_limit);
-            if(e->action){
-                e->action(e);
-            }
+            gd_text_input_start(textbox->text, textbox->character_limit);
+            textbox->editing = true;
         }
     }
 }

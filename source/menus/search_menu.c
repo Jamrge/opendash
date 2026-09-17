@@ -145,12 +145,22 @@ void action_clear_filters(UIElement* e) {
     clear_search_filters_init();
 }
 
+static void action_search(UIElement* e);
+
 void action_set_query(UIElement* e){
     snprintf(filters.searchQuery, sizeof(filters.searchQuery), "%.*s", (int)sizeof(filters.searchQuery) - 1, ((UITextbox *)e)->text);
+    action_search(NULL);
 }
 
 void action_search(UIElement* e) {
-    filters.searchType = ui_prop_int(&e->custom_properties, "type", 0);
+    if (e) {
+        UIElement *tb = ui_get_element_by_tag(e->screen, "searchbox");
+        if (tb) {
+            snprintf(filters.searchQuery, sizeof(filters.searchQuery), "%.*s",
+                     (int)sizeof(filters.searchQuery) - 1, ((UITextbox *)tb)->text);
+        }
+        filters.searchType = ui_prop_int(&e->custom_properties, "type", 0);
+    }
     filters.currentPage = 0;
     search_needs_refresh = true;
     new_state = STATE_ONLINE;
@@ -270,6 +280,8 @@ void search_menu_loop() {
             break;
         }
     }
+    gd_text_input_stop();
+    if (new_state != STATE_ONLINE) filters.searchQuery[0] = '\0';
     C2D_TargetClear(bot, C2D_Color32(0, 0, 0, 255));
     
     ui_unload_screen(&default_screen);

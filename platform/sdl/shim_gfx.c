@@ -89,6 +89,14 @@ static bool file_readable(const char* path)
 
 static C3D_RenderTarget* g_targets[4] = { 0 }; /* indexed by gfx screen value */
 
+/* Hook called when top screen rendering is done (TOP→BOT transition) */
+static void (*g_top_screen_done_hook)(void) = NULL;
+static int g_last_screen = -1;
+
+void shim_set_top_screen_done_hook(void (*hook)(void)) {
+    g_top_screen_done_hook = hook;
+}
+
 /* ------------------------------------------------------------------ */
 /* Render targets + frame composite                                     */
 /* ------------------------------------------------------------------ */
@@ -233,16 +241,22 @@ bool C2D_SceneBegin(C3D_RenderTarget* target)
 {
 	if (!gd_renderer) return false;
 
+	/* Fire hook BEFORE switching target, while renderer still points to top screen */
+	if (g_top_screen_done_hook && g_last_screen == GFX_TOP && target && target->base.screen == GFX_BOTTOM)
+		g_top_screen_done_hook();
+
 	if (target)
 	{
 		if ((int)target->base.screen >= 0 && (int)target->base.screen < 4)
 			g_targets[target->base.screen] = target;
 		SDL_SetTextureBlendMode(target->base.tex, SDL_BLENDMODE_NONE);  /* direct screen copy, alpha-independent */
 		SDL_SetRenderTarget(gd_renderer, target->base.tex);
+		g_last_screen = target->base.screen;
 	}
 	else
 	{
 		SDL_SetRenderTarget(gd_renderer, NULL);
+		g_last_screen = -1;
 	}
 	return true;
 }

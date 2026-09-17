@@ -55,11 +55,12 @@ typedef struct {
     bool skipHighObjWarning;
     bool skipVersionWarning;
     bool skipSongWarning;
+    bool showFps;
 } SettingState;
 
 /* Number of entries in Setting settings[] (settings.c) — keep in sync
  * with the array definition: ARRAY_LEN users rely on sizeof(). */
-#define SETTINGS_COUNT 28
+#define SETTINGS_COUNT 29
 extern Setting settings[SETTINGS_COUNT];
 extern SettingState settingsState;
 

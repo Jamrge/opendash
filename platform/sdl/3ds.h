@@ -237,6 +237,14 @@ extern MIX_Mixer* gd_mixer;
 extern MIX_Track* gd_music_track;
 void ensure_mixer(void);
 
+void shim_set_top_screen_done_hook(void (*hook)(void));
+
+/* Non-blocking text input */
+bool gd_is_text_input_active(void);
+const char *gd_text_input_get_current(void);
+void gd_text_input_start(char *buf, int limit);
+void gd_text_input_stop(void);
+
 enum
 {
 	NDSP_WBUF_FREE    = 0,

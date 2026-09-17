@@ -112,6 +112,15 @@ void gfxSetWide(bool enable){ (void)enable; }
 void gspWaitForVBlank(void) { SDL_Delay(16); }
 
 /* ------------------------------------------------------------------ */
+/* Non-blocking text input (SDL_StartTextInput) — forward decls         */
+/* ------------------------------------------------------------------ */
+
+static void gd_text_input_append(const char *text);
+static void gd_text_input_backspace(void);
+static void gd_text_input_confirm(void);
+void gd_text_input_stop(void);
+
+/* ------------------------------------------------------------------ */
 /* apt / svc / os / cfgu / soc / romfs: fixed values                    */
 /* ------------------------------------------------------------------ */
 
@@ -122,7 +131,25 @@ bool aptMainLoop(void)
 	SDL_Event ev;
 	while (SDL_PollEvent(&ev))
 	{
-		if (ev.type == SDL_EVENT_QUIT) gd_quit = true;
+		if (ev.type == SDL_EVENT_QUIT) { gd_quit = true; continue; }
+
+		/* Non-blocking text input: intercept only text + editing keys */
+		if (gd_is_text_input_active()) {
+			if (ev.type == SDL_EVENT_TEXT_INPUT) {
+				gd_text_input_append(ev.text.text);
+				continue;
+			}
+			if (ev.type == SDL_EVENT_KEY_DOWN) {
+				if (ev.key.scancode == SDL_SCANCODE_BACKSPACE) {
+					gd_text_input_backspace();
+					continue;
+				}
+				if (ev.key.scancode == SDL_SCANCODE_RETURN) {
+					gd_text_input_confirm();
+					continue;
+				}
+			}
+		}
 	}
 	return !gd_quit;
 }
@@ -219,6 +246,74 @@ static SDL_Scancode g_dbg_scancodes[DBG_KEY_COUNT] = {
 static bool g_dbg_held[DBG_KEY_COUNT] = {0};
 static bool g_dbg_prev[DBG_KEY_COUNT] = {0};
 static bool g_dbg_down[DBG_KEY_COUNT] = {0};
+
+/* ------------------------------------------------------------------ */
+/* Non-blocking text input (SDL_StartTextInput)                         */
+/* ------------------------------------------------------------------ */
+
+static bool gd_text_input_active = false;
+static char  gd_text_input_buf[128];
+static int   gd_text_input_limit = 0;
+static char *gd_text_input_dst = NULL;
+
+bool gd_is_text_input_active(void) { return gd_text_input_active; }
+
+const char *gd_text_input_get_current(void) {
+    return gd_text_input_active ? gd_text_input_buf : NULL;
+}
+
+void gd_text_input_start(char *buf, int limit) {
+    if (!gd_window || !buf || limit <= 0) return;
+    gd_text_input_dst = buf;
+    gd_text_input_limit = limit < (int)sizeof(gd_text_input_buf) ? limit : (int)sizeof(gd_text_input_buf) - 1;
+    strncpy(gd_text_input_buf, buf, sizeof(gd_text_input_buf) - 1);
+    gd_text_input_buf[sizeof(gd_text_input_buf) - 1] = '\0';
+    gd_text_input_active = true;
+    SDL_StartTextInput(gd_window);
+}
+
+static void gd_text_input_append(const char *text) {
+    if (!text || !gd_text_input_active) return;
+    int cur = (int)strlen(gd_text_input_buf);
+    int add = (int)strlen(text);
+    if (cur + add > gd_text_input_limit) {
+        add = gd_text_input_limit - cur;
+    }
+    if (add > 0) {
+        strncat(gd_text_input_buf, text, (size_t)add);
+        gd_text_input_buf[gd_text_input_limit] = '\0';
+    }
+}
+
+static void gd_text_input_backspace(void) {
+    if (!gd_text_input_active) return;
+    int len = (int)strlen(gd_text_input_buf);
+    if (len > 0) {
+        /* walk backwards over UTF-8 to find the last character start */
+        int last = len - 1;
+        while (last > 0 && ((unsigned char)gd_text_input_buf[last] & 0xC0) == 0x80)
+            last--;
+        gd_text_input_buf[last] = '\0';
+    }
+}
+
+static void gd_text_input_confirm(void) {
+    if (!gd_text_input_active) return;
+    SDL_StopTextInput(gd_window);
+    if (gd_text_input_dst) {
+        strncpy(gd_text_input_dst, gd_text_input_buf, (size_t)gd_text_input_limit);
+        gd_text_input_dst[gd_text_input_limit] = '\0';
+    }
+    gd_text_input_active = false;
+    gd_text_input_dst = NULL;
+}
+
+void gd_text_input_stop(void) {
+    if (!gd_text_input_active) return;
+    SDL_StopTextInput(gd_window);
+    gd_text_input_active = false;
+    gd_text_input_dst = NULL;
+}
 static touchPosition g_touch  = { 0, 0 };
 static circlePosition g_circle = { 0, 0 };
 
@@ -253,8 +348,8 @@ static bool scan_touch(float mx, float my)
 static u32 scan_keys(const bool* keys)
 {
 	u32 k = 0;
-	if (keys[SDL_SCANCODE_SPACE] || keys[SDL_SCANCODE_Z]) k |= KEY_A;
-	if (keys[SDL_SCANCODE_X]     || keys[SDL_SCANCODE_ESCAPE]) k |= KEY_B;
+	if (keys[SDL_SCANCODE_SPACE]) k |= KEY_A;
+	if (keys[SDL_SCANCODE_ESCAPE]) k |= KEY_B;
 	if (keys[SDL_SCANCODE_C]) k |= KEY_X;
 	if (keys[SDL_SCANCODE_V]) k |= KEY_Y;
 	if (keys[SDL_SCANCODE_Q]) k |= KEY_L;
@@ -461,8 +556,8 @@ static u32 gd_bits_for_scancode(SDL_Scancode sc)
 {
 	switch (sc)
 	{
-		case SDL_SCANCODE_SPACE: case SDL_SCANCODE_Z: return KEY_A;
-		case SDL_SCANCODE_X:     case SDL_SCANCODE_ESCAPE: return KEY_B;
+		case SDL_SCANCODE_SPACE: return KEY_A;
+		case SDL_SCANCODE_ESCAPE: return KEY_B;
 		case SDL_SCANCODE_C: return KEY_X;
 		case SDL_SCANCODE_V: return KEY_Y;
 		case SDL_SCANCODE_Q: return KEY_L;

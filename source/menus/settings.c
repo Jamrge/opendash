@@ -90,6 +90,16 @@ Setting settings[] = {
         .key = CONFIG_GRAPHICS_PATH "glowEnabled"
     },
     {
+        .id = "showFps",
+        .label = "Show FPS",
+        .additionalInfo = "Shows an FPS counter on the top screen.",
+        .page = PAGE_GRAPHICS,
+
+        .defaultValue = false,
+        .var = &settingsState.showFps,
+        .key = CONFIG_GRAPHICS_PATH "showFps"
+    },
+    {
         .id = "yButton",
         .label = "Y to jump",
         .additionalInfo = "Swaps your jump input to Y.",

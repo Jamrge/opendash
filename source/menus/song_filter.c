@@ -141,6 +141,7 @@ void song_filter_init() {
 
 int song_filter_loop() {
     if (yes_exit) {
+        gd_text_input_stop();
         ui_unload_screen(&screen);
 
         return true;
