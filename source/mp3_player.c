@@ -17,14 +17,14 @@
 #define MP3_BUF_SIZE 4096
 #define NUM_BUFS 4
 
-static u32 *audioBuffer;
+static u8 *audioBuffer;
 static LightEvent soundEvent;
 static LightEvent seekEvent;
 static LightLock decoderLock;
 
 static mpg123_handle* mh;
 static size_t buffSize;
-static int32_t rate;
+static long rate;
 static int audio_channels;
 
 static volatile bool quit = false;
@@ -71,7 +71,11 @@ static void audioCallback(void *const nul_) {
 void audio_init() {
     LightEvent_Init(&soundEvent, RESET_ONESHOT);
 
-    audioBuffer = (u32*)linearAlloc(NUM_BUFS * buffsize_mp3() * channels_mp3() * sizeof(int16_t));
+    audioBuffer = (u8*)linearAlloc(NUM_BUFS * buffsize_mp3());
+    if (!audioBuffer) {
+        output_log("Failed to allocate audio buffer\n");
+        return;
+    }
     
     ndspChnReset(MUSIC_CHANNEL);
     ndspSetOutputMode(NDSP_OUTPUT_STEREO);
@@ -84,7 +88,7 @@ void audio_init() {
 
     for (int i = 0; i < NUM_BUFS; i++) {
         memset(&waveBuf[i], 0, sizeof(ndspWaveBuf));
-        waveBuf[i].data_vaddr = audioBuffer + i * buffsize_mp3() * channels_mp3();
+        waveBuf[i].data_vaddr = audioBuffer + i * buffsize_mp3();
     }
 
     apply_volume_settings();
@@ -93,6 +97,7 @@ void audio_init() {
 void audio_exit() {
     ndspChnReset(MUSIC_CHANNEL);
     linearFree(audioBuffer);
+    audioBuffer = NULL;
     mpg123_close(mh);
     mpg123_delete(mh);
     mpg123_exit();
@@ -285,11 +290,11 @@ void audio_thread(void *const file) {
 
             if (buf->status == NDSP_WBUF_DONE || buf->status == NDSP_WBUF_FREE) {
                 LightLock_Lock(&decoderLock);
-                size_t read = decode_mp3(buf->data_pcm16);
+                size_t read = decode_mp3((void *)buf->data_pcm16);
                 LightLock_Unlock(&decoderLock);
 
                 if (read > 0) {
-                    size_t frames = read / (sizeof(int16_t) * channels_mp3());
+                    size_t frames = read / channels_mp3();
 
                     float rms = calculate_power((int16_t*)buf->data_pcm16,
                                             frames,
@@ -393,7 +398,7 @@ void seek_mp3(float time) {
 
         for (int i = 0; i < NUM_BUFS; i++) {
             memset(&waveBuf[i], 0, sizeof(ndspWaveBuf));
-            waveBuf[i].data_vaddr = audioBuffer + i * buffsize_mp3() * channels_mp3();
+            waveBuf[i].data_vaddr = audioBuffer + i * buffsize_mp3();
         }
         LightLock_Unlock(&decoderLock);
         ndspChnSetPaused(MUSIC_CHANNEL, oldstate); //once the seeking is done, playback can continue.
