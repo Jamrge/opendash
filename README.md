@@ -11,6 +11,5 @@ This will or will not be used as a base for Opendash.
 - Implement better desktop keybinds (Quick restart, showing debug menu, esc to pause, etc)
 - Remove Dual Screen and make a singular UI
 - Make an actual CBF implementation
-- Audio needs fixing
 - FPS Settings
 
